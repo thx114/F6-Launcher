@@ -41,6 +41,16 @@
       "peVersion": "310.9.16",
       "machine": "Amd64",
       "requireDll": true
+    },
+    {
+      "family": "dlssnr",
+      "fileName": "nvngx_dlssnr.dll",
+      "version": "原神v4_预设A_1080p5000",
+      "size": 276162560,
+      "sha256": "094D2B0E28EEB65A4250F99EEE8230B1BC9BEFCB459331E569DDB76B26BCC6CB",
+      "peVersion": "310.9.16",
+      "machine": "Amd64",
+      "requireDll": true
     }
   ],
   "packages": [
@@ -71,6 +81,13 @@
       "url": "https://github.com/thx114/HoYoShadeHub-DLSSNR-Runtimes/releases/download/nr-genshin-v2-3000-20261025/nvngx_dlssnr_GenshinV2-3000.zip",
       "note": "",
       "sha256": "E7CA8C7AA0BDA9B8912D72784AA86276A4FDD5ED44005C402C54F10AF09F0033"
+    },
+    {
+      "family": "dlssnr",
+      "version": "原神v4_预设A_1080p5000",
+      "url": "https://github.com/thx114/HoYoShadeHub-DLSSNR-Runtimes/releases/download/nr-genshin-v4-presetA-1080p5000-20261101/nvngx_dlssnr_GenshinV4-PresetA-1080p5000.zip",
+      "note": "DLSS F5 / Genshin v4 / Preset A / 1080p5000",
+      "sha256": "8490938386B42D860B7ED99577F311A861FDFADBA205D502688E4CCBA1B0F5B5"
     }
   ]
 }
