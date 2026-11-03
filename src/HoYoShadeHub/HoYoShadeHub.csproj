@@ -5,6 +5,7 @@
 		<TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
 		<LangVersion>preview</LangVersion>
 		<RootNamespace>HoYoShadeHub</RootNamespace>
+		<AssemblyName>F6Launcher</AssemblyName>
 		<Nullable>enable</Nullable>
 		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 		<ApplicationManifest>app.manifest</ApplicationManifest>

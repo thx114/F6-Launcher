@@ -622,7 +622,7 @@
                                                     <MenuFlyoutItem Icon="Rename" Click="MenuFlyout_RenameOptiScalerBuild_Click" Text="重命名（显示名 / 版本号）" />
                                                     <MenuFlyoutItem Icon="OpenFile" Click="MenuFlyout_OpenOptiScalerBuildFolder_Click" Text="打开目录" />
                                                     <MenuFlyoutSeparator />
-                                                    <MenuFlyoutItem Icon="Delete" Click="MenuFlyout_DeleteOptiScalerBuild_Click" Text="删除这个构建" />
+                                                    <MenuFlyoutItem Icon="Delete" Click="MenuFlyout_DeleteOptiScalerBuild_Click" Text="删除摘要所示版本" />
                                                 </MenuFlyout>
                                             </StackPanel.ContextFlyout>
                                             <!--  标题行：点一下展开 / 收起（默认只占紧凑一行）  -->
@@ -699,13 +699,6 @@
                                                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                                                    Style="{ThemeResource CaptionTextBlockStyle}"
                                                                    Text="{x:Bind SummaryText}" />
-                                                        <ToggleSwitch MinWidth="0"
-                                                                      VerticalAlignment="Center"
-                                                                      IsOn="{x:Bind IsGloballyEnabled, Mode=TwoWay}"
-                                                                      OffContent="全局关"
-                                                                      OnContent="全局开"
-                                                                      Toggled="ToggleSwitch_OptiScalerBuildEnabled_Toggled"
-                                                                      ToolTipService.ToolTip="每个构建自己的全局开关：关掉后哪个游戏都用不了这个构建（启动时不注入）" />
                                                     </StackPanel>
                                                 </Grid>
                                             </Button>
@@ -717,7 +710,7 @@
                                                            Text="{x:Bind MetaText}"
                                                            TextWrapping="Wrap" />
 
-                                                <!--  需求4：这个来源的已安装版本（每行一个删除），摆在版本下拉上面  -->
+                                                <!-- 同一 Opt 的版本集中管理；开关、目录、重装和删除均按版本生效。 -->
                                                 <ItemsControl ItemsSource="{x:Bind InstalledVersionRows}">
                                                     <ItemsControl.ItemTemplate>
                                                         <DataTemplate x:DataType="local:InstalledOptiScalerVersionRow">
@@ -728,6 +721,16 @@
                                                                 <TextBlock VerticalAlignment="Center"
                                                                            Style="{ThemeResource CaptionTextBlockStyle}"
                                                                            Text="{x:Bind DisplayText}" />
+                                                                <ToggleSwitch MinWidth="0"
+                                                                              VerticalAlignment="Center"
+                                                                              IsOn="{x:Bind IsGloballyEnabled, Mode=TwoWay}"
+                                                                              OffContent="全局关"
+                                                                              OnContent="全局开"
+                                                                              Toggled="ToggleSwitch_OptiScalerBuildEnabled_Toggled"
+                                                                              ToolTipService.ToolTip="只控制这个版本的全局可用性，不改变游戏已选版本" />
+                                                                <Button Padding="8,2"
+                                                                        Click="Button_OpenOptiScalerBuild_Click"
+                                                                        Content="打开目录" />
                                                                 <Border Padding="6,1"
                                                                         VerticalAlignment="Center"
                                                                         Background="{ThemeResource AccentFillColorDefaultBrush}"
@@ -786,7 +789,7 @@
                                                     <Button Click="Button_OpenOptiScalerBuild_Click"
                                                             Content="打开目录"
                                                             IsEnabled="{x:Bind CanOpenFolder}" />
-                                                    <Button Click="Button_DeleteOptiScalerBuild_Click" Content="删除" />
+                                                    <Button Click="Button_DeleteOptiScalerBuild_Click" Content="删除摘要版本" />
                                                 </StackPanel>
 
                                                 <HyperlinkButton Padding="0"

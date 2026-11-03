@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -196,7 +197,7 @@ internal static class MultiplayerGameGuard
             int currentId = Environment.ProcessId;
 
             // 1) 同名兄弟进程（playtime / rpc / run / auto 子进程）
-            foreach (Process process in Process.GetProcessesByName("HoYoShadeHub"))
+            foreach (Process process in Process.GetProcessesByName("HoYoShadeHub").Concat(Process.GetProcessesByName("F6Launcher")))
             {
                 if (process.Id == currentId)
                 {

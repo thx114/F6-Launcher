@@ -56,9 +56,9 @@ internal static class PortableUpdatePolicy
 
         string[] parts = relative.Replace('\\', '/').Split('/');
         if (parts.Length != 2 || !parts[0].StartsWith("app-", StringComparison.OrdinalIgnoreCase)
-            || parts[0].Length <= 4 || !parts[1].Equals("HoYoShadeHub.exe", StringComparison.OrdinalIgnoreCase))
+            || parts[0].Length <= 4 || !(parts[1].Equals("F6Launcher.exe", StringComparison.OrdinalIgnoreCase) || parts[1].Equals("HoYoShadeHub.exe", StringComparison.OrdinalIgnoreCase)))
         {
-            throw new InvalidDataException("version.ini must point to app-*/HoYoShadeHub.exe.");
+            throw new InvalidDataException("version.ini must point to app-*/F6Launcher.exe (or the legacy HoYoShadeHub.exe).");
         }
 
         return GetArchiveTarget(root, relative);

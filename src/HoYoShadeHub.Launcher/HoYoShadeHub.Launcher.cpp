@@ -88,7 +88,7 @@ int wmain(int argc, wchar_t* argv[])
                 const auto relative = path(exe_path);
                 if (!relative.is_absolute() && relative.parent_path().parent_path().empty()
                     && relative.parent_path().wstring().starts_with(L"app-")
-                    && relative.filename() == L"HoYoShadeHub.exe" && exists(target_exe))
+                    && (relative.filename() == L"F6Launcher.exe" || relative.filename() == L"HoYoShadeHub.exe") && exists(target_exe))
 				{
 					run_exe = target_exe.wstring();
 				}
@@ -108,14 +108,17 @@ int wmain(int argc, wchar_t* argv[])
 		{
             if (folder.is_directory() && folder.path().filename().wstring().starts_with(L"app-"))
 			{
-				auto exe = path(folder).append(L"HoYoShadeHub.exe");
-				if (exists(exe))
+				for (const auto* name : { L"F6Launcher.exe", L"HoYoShadeHub.exe" })
 				{
-					auto time = last_write_time(exe);
-					if (time > last_time)
+					auto exe = path(folder).append(name);
+					if (exists(exe))
 					{
-						target_exe = exe;
-						last_time = time;
+						auto time = last_write_time(exe);
+						if (time > last_time)
+						{
+							target_exe = exe;
+							last_time = time;
+						}
 					}
 				}
 			}

@@ -109,7 +109,7 @@
                                      AutomationProperties.Name="选择此 OptiScaler 构建" />
 
                         <StackPanel Grid.Column="1" Grid.Row="0" Spacing="6">
-                            <!--  第一行：来源 + 版本 + 标签 + 「使用中」  -->
+                            <!-- 第一行：同一种 Opt 只显示一个来源标题。 -->
                             <StackPanel Orientation="Horizontal" Spacing="6">
                                 <TextBlock Style="{ThemeResource BodyStrongTextBlockStyle}"
                                            Text="{x:Bind Title, Mode=OneWay}"
@@ -140,6 +140,18 @@
                                        Text="{x:Bind Detail, Mode=OneWay}"
                                        TextTrimming="CharacterEllipsis" />
 
+                            <StackPanel Orientation="Horizontal" Spacing="6" Tapped="Settings_Tapped">
+                                <TextBlock VerticalAlignment="Center"
+                                           Style="{ThemeResource CaptionTextBlockStyle}"
+                                           Text="版本：" />
+                                <ComboBox MinWidth="200"
+                                          IsEnabled="{x:Bind CanSelectVersion, Mode=OneWay}"
+                                          ItemsSource="{x:Bind BuildOptions}"
+                                          SelectedItem="{x:Bind SelectedBuildOption, Mode=TwoWay}"
+                                          AutomationProperties.Name="选择本游戏的 OptiScaler 版本"
+                                          ToolTipService.ToolTip="切换本游戏使用的此 Opt 版本；配置编辑不会改变 Opt 选择" />
+                            </StackPanel>
+
                             <!-- 配置区的空白和说明文字也不参与构建选择。 -->
                             <StackPanel Orientation="Horizontal" Spacing="6" Tapped="Settings_Tapped">
 
@@ -158,7 +170,7 @@
                                 <TextBlock VerticalAlignment="Center"
                                            Foreground="{ThemeResource TextFillColorTertiaryBrush}"
                                            Style="{ThemeResource CaptionTextBlockStyle}"
-                                           Text="{x:Bind CurrentProfileText}"
+                                           Text="{x:Bind CurrentProfileText, Mode=OneWay}"
                                            TextTrimming="CharacterEllipsis" />
                                 <ComboBox x:Name="ComboBox_NrVersion" Width="160" VerticalAlignment="Center" Loaded="ComboBox_Nr_Loaded" SelectionChanged="ComboBox_Nr_SelectionChanged" IsEnabled="{x:Bind SettingsEnabled, Mode=OneWay}" ToolTipService.ToolTip="选择本游戏 NR 版本；选择后立即保存，重启游戏生效" AutomationProperties.Name="NR 版本" />
                                 </StackPanel>

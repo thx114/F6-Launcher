@@ -466,7 +466,7 @@ try {
                 "version.ini",
                 "portable-layout.json",
                 "HoYoShadeHub.exe",
-                "app-$Version/HoYoShadeHub.exe",
+                "app-$Version/F6Launcher.exe",
                 "HoYoShade/ReShade64.dll",
                 "HoYoShade/inject.exe",
                 "HoYoShade/ReShade.ini"

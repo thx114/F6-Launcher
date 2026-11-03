@@ -231,17 +231,16 @@ internal static class Program
 
             foreach (string folder in Directory.EnumerateDirectories(baseFolder, "app-*"))
             {
-                string exe = PortableUpdatePolicy.GetArchiveTarget(baseFolder, Path.GetFileName(folder) + "/HoYoShadeHub.exe");
-                if (!File.Exists(exe))
+                foreach (string fileName in new[] { "F6Launcher.exe", "HoYoShadeHub.exe" })
                 {
-                    continue;
-                }
-
-                DateTime time = File.GetLastWriteTimeUtc(exe);
-                if (time > bestTime)
-                {
-                    best = exe;
-                    bestTime = time;
+                    string exe = PortableUpdatePolicy.GetArchiveTarget(baseFolder, Path.GetFileName(folder) + "/" + fileName);
+                    if (!File.Exists(exe)) continue;
+                    DateTime time = File.GetLastWriteTimeUtc(exe);
+                    if (time > bestTime)
+                    {
+                        best = exe;
+                        bestTime = time;
+                    }
                 }
             }
 

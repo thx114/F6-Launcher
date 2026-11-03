@@ -1482,7 +1482,8 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
         bool hasSearch = !string.IsNullOrWhiteSpace(_search);
 
         ReconcileCollection(OptiScalerBuilds, _allOptiScalerBuilds.Where(build =>
-            MatchSearch(build.Title, build.Build.Version, build.Build.SourceId, build.Build.AssetName)));
+            MatchSearch(build.Title, build.Build.Version, build.Build.SourceId, build.Build.AssetName)
+            || build.InstalledVersionRows.Any(row => MatchSearch(row.Version, row.DisplayText))));
         ReconcileCollection(OptiScalerSources, _allOptiScalerSources.Where(source =>
             MatchSearch(source.Name, source.Description, source.Repository, source.TagsText)));
 
@@ -1860,15 +1861,16 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
 
     private void ToggleSwitch_OptiScalerBuildEnabled_Toggled(object sender, RoutedEventArgs e)
     {
-        if (sender is not ToggleSwitch { DataContext: OptiScalerBuildItemViewModel item } toggle)
+        if (sender is not ToggleSwitch { DataContext: InstalledOptiScalerVersionRow row } toggle)
         {
             return;
         }
 
-        AppConfig.SetOptiScalerBuildEnabled(item.Build.Id, toggle.IsOn);
+        if (AppConfig.IsOptiScalerBuildEnabled(row.BuildId) == toggle.IsOn) return;
+        AppConfig.SetOptiScalerBuildEnabled(row.BuildId, toggle.IsOn);
         TextBlock_Status.Text = toggle.IsOn
-            ? $"「{item.Title}」的全局开关：已打开。"
-            : $"「{item.Title}」的全局开关：已关闭。";
+            ? $"「{row.Owner.Title} · {row.Version}」的全局开关：已打开。"
+            : $"「{row.Owner.Title} · {row.Version}」的全局开关：已关闭。";
     }
 
     /// <summary>
@@ -1903,7 +1905,9 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
         try
         {
             await YieldToUiAsync(cancellationToken);
-            HashSet<string> expandedBuilds = [.. _allOptiScalerBuilds.Where(b => b.IsExpanded).Select(b => b.Id)];
+            HashSet<string> expandedBuilds = new(
+                _allOptiScalerBuilds.Where(b => b.IsExpanded).Select(b => b.Build.SourceId),
+                StringComparer.OrdinalIgnoreCase);
             HashSet<string> expandedSources = [.. _allOptiScalerSources.Where(s => s.IsExpanded).Select(s => s.Source.Id)];
             List<OptiScalerSource> overlay = [.. _optiScalerOverlay ?? []];
             var versions = new Dictionary<string, List<ExtensionVersion>>(_optiScalerVersions, StringComparer.OrdinalIgnoreCase);
@@ -1951,33 +1955,37 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
             byId[source.Id] = source;
         }
 
-        // 「当前」= 本地已经下载好的构建（展开可以换版本）
-        foreach (OptiScalerBuild build in all)
+        // A source is one Opt; its installed builds are versions inside that card.
+        // Preserve library order, preferring the selected build as the representative.
+        foreach (var group in all.GroupBy(b => b.SourceId, StringComparer.OrdinalIgnoreCase))
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            OptiScalerBuild build = group.FirstOrDefault(b =>
+                string.Equals(b.Id, selectedId, StringComparison.OrdinalIgnoreCase)) ?? group.First();
             byId.TryGetValue(build.SourceId, out OptiScalerSource? source);
 
             OptiScalerSource? catalogSource = source ?? sources.FirstOrDefault(s =>
                 string.Equals(s.Name, build.SourceId, StringComparison.OrdinalIgnoreCase));
             var vm = new OptiScalerBuildItemViewModel(build, selectedId, source, catalogSource)
             {
-                IsExpanded = expandedBuilds.Contains(build.Id),
+                IsExpanded = expandedBuilds.Contains(build.SourceId),
             };
 
 
             // 需求5：同一来源装过的版本（下拉里选到已装过的那个 → 按钮显示「重装」）
-            foreach (OptiScalerBuild other in all.Where(b =>
-                         string.Equals(b.SourceId, build.SourceId, StringComparison.OrdinalIgnoreCase)))
+            foreach (OptiScalerBuild other in group)
             {
                 vm.InstalledVersions.Add(other.Version);
             }
 
             // 需求4：同一来源的已安装版本列表（每行一个删除），摆在版本下拉上面
-            vm.SetInstalledVersions(all
-                .Where(b => string.Equals(b.SourceId, build.SourceId, StringComparison.OrdinalIgnoreCase))
+            vm.SetInstalledVersions(group
                 .Select(b => new InstalledOptiScalerVersionRow
                 {
                     Owner = vm,
                     BuildId = b.Id,
+                    BuildDirectory = b.Directory,
+                    IsGloballyEnabled = AppConfig.IsOptiScalerBuildEnabled(b.Id),
                     Version = b.Version,
                     DisplayText = string.IsNullOrWhiteSpace(b.AssetName) ? b.Version : $"{b.Version}  ·  {b.AssetName}",
                     IsCurrent = string.Equals(b.Id, selectedId, StringComparison.OrdinalIgnoreCase),
@@ -2055,9 +2063,9 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
         NrdllPlaceResult result = OptiScalerRuntime.EnsureNrdll(
             item.Build.Directory,
             _manager?.Host.AddonsPath,
-            OptiScalerBuilds
-                .Where(v => !string.Equals(v.Id, item.Id, StringComparison.OrdinalIgnoreCase))
-                .Select(v => v.Build.Directory));
+            _allOptiScalerBuilds.SelectMany(v => v.InstalledVersionRows)
+                .Where(v => !string.Equals(v.BuildId, item.Id, StringComparison.OrdinalIgnoreCase))
+                .Select(v => v.BuildDirectory));
 
         TextBlock_Status.Text = result.Message;
         _logger.LogInformation("OptiScaler nrdll: {Status} ({Source} -> {Target})",
@@ -2081,9 +2089,9 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
         List<string> replacements = OptiScalerRuntime.EnsureUpscalerReplacements(
             item.Build.Directory,
             _manager?.Host.AddonsPath,
-            OptiScalerBuilds
-                .Where(v => !string.Equals(v.Id, item.Id, StringComparison.OrdinalIgnoreCase))
-                .Select(v => v.Build.Directory));
+            _allOptiScalerBuilds.SelectMany(v => v.InstalledVersionRows)
+                .Where(v => !string.Equals(v.BuildId, item.Id, StringComparison.OrdinalIgnoreCase))
+                .Select(v => v.BuildDirectory));
 
         if (replacements.Count > 0)
         {
@@ -2113,14 +2121,17 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
 
     private void Button_OpenOptiScalerBuild_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is not FrameworkElement { DataContext: OptiScalerBuildItemViewModel item })
+        string? directory = (sender as FrameworkElement)?.DataContext switch
         {
-            return;
-        }
+            InstalledOptiScalerVersionRow row => row.BuildDirectory,
+            OptiScalerBuildItemViewModel item => item.Build.Directory,
+            _ => null,
+        };
+        if (string.IsNullOrWhiteSpace(directory)) return;
 
         try
         {
-            Process.Start(new ProcessStartInfo(item.Build.Directory) { UseShellExecute = true });
+            Process.Start(new ProcessStartInfo(directory) { UseShellExecute = true });
         }
         catch (Exception ex)
         {
@@ -5694,7 +5705,7 @@ public interface IOptiScalerVersionHost
     string? TagOf(string? display);
 }
 
-/// <summary>「OptiScaler」那一栏「当前」里的一行：一个已经下载到本地的构建。</summary>
+/// <summary>「OptiScaler」当前列表的一张来源卡片，包含该来源的全部本地版本。</summary>
 public sealed partial class OptiScalerBuildItemViewModel : ObservableObject, IOptiScalerVersionHost
 {
     private readonly Dictionary<string, string> _versionTags = new(StringComparer.OrdinalIgnoreCase);
@@ -5713,7 +5724,6 @@ public sealed partial class OptiScalerBuildItemViewModel : ObservableObject, IOp
             Description = string.Empty,
         };
         CurrentVersion = build.Version;
-        IsGloballyEnabled = AppConfig.IsOptiScalerBuildEnabled(build.Id);
         HasNrdll = OptiScalerRuntime.HasNrdll(build.Directory);
         CanOpenFolder = Directory.Exists(build.Directory);
     }
@@ -5864,10 +5874,6 @@ public sealed partial class OptiScalerBuildItemViewModel : ObservableObject, IOp
     [ObservableProperty]
     private bool canInteract = true;
 
-    /// <summary>这个构建自己的全局开关（AppConfig 里按构建 id 记；关掉后哪个游戏都不注入）</summary>
-    [ObservableProperty]
-    private bool isGloballyEnabled;
-
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(ExpandedVisibility))]
     [NotifyPropertyChangedFor(nameof(ExpandGlyph))]
@@ -5965,6 +5971,11 @@ public sealed class InstalledOptiScalerVersionRow
     public OptiScalerBuildItemViewModel Owner { get; set; } = null!;
 
     public string BuildId { get; set; } = string.Empty;
+
+    public string BuildDirectory { get; set; } = string.Empty;
+
+    /// <summary>Each version retains its own availability; grouping never changes it.</summary>
+    public bool IsGloballyEnabled { get; set; }
 
     /// <summary>版本 tag（重装用）</summary>
     public string Version { get; set; } = string.Empty;

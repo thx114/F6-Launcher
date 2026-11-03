@@ -7,7 +7,7 @@
 
         <Output>\
         ├─ HoYoShadeHub.exe       外层启动器（自包含单文件，双击入口）
-        ├─ version.ini            exe_path=app-<版本>\HoYoShadeHub.exe
+        ├─ version.ini            exe_path=app-<版本>\F6Launcher.exe
         └─ app-<版本>\            主程序（dotnet publish，自包含、ReadyToRun）
 
     同时生成 zip：
@@ -174,7 +174,7 @@ try {
     Remove-PackageArtifact -LiteralPath $staleLauncher -AllowedRoot $outDir -Records $packageCleanup
 
     Set-Content -Path (Join-Path $outDir "version.ini") `
-        -Value "exe_path=app-$Version\HoYoShadeHub.exe" -Encoding UTF8
+        -Value "exe_path=app-$Version\F6Launcher.exe" -Encoding UTF8
 
     # 不打包 config.ini：解压覆盖旧客户端时需保留用户已有配置。
     Remove-Item (Join-Path $outDir "config.ini") -Force -ErrorAction SilentlyContinue
@@ -260,7 +260,7 @@ try {
             $entryCount++
         }
         if ($entryCount -ne @(Get-ChildItem -LiteralPath $outDir -Recurse -File -Force).Count) { throw 'ZIP 条目数与源目录不一致。' }
-        foreach ($required in @('HoYoShadeHub.exe', 'version.ini', "app-$Version/HoYoShadeHub.exe", "app-$Version/HoYoShadeHub.dll")) {
+        foreach ($required in @('HoYoShadeHub.exe', 'version.ini', "app-$Version/F6Launcher.exe", "app-$Version/F6Launcher.dll")) {
             if ($required -notin $check.Entries.FullName) { throw "普通包缺少必要条目：$required" }
         }
         if (@($check.Entries | Where-Object { $_.FullName -like 'HoYoShade/*' }).Count) { throw '普通包不应包含 HoYoShade 框架。' }

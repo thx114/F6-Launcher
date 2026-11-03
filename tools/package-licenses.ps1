@@ -15,7 +15,7 @@ function Copy-DistributionLicenses {
 
 function Assert-ForkDistribution {
     param([string] $RepoRoot, [string] $Output, [string] $Version)
-    foreach ($relative in @('HoYoShadeHub.exe', 'F6Launcher.exe', "app-$Version\HoYoShadeHub.exe")) {
+    foreach ($relative in @('HoYoShadeHub.exe', 'F6Launcher.exe', "app-$Version\F6Launcher.exe")) {
         $path = Join-Path $Output $relative
         if (-not (Test-Path -LiteralPath $path -PathType Leaf) -or
             [Diagnostics.FileVersionInfo]::GetVersionInfo($path).ProductName -ne 'F6 Launcher') {

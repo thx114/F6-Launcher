@@ -24,7 +24,7 @@ using System.Threading.Tasks;
 namespace HoYoShadeHub.Features.OptiScaler;
 
 /// <summary>
-/// OptiScaler 页里的一张构建卡片；设置编辑与本游戏的构建选择相互独立。
+/// OptiScaler 页里的一张来源卡片；同一 Opt 的版本放在卡片内选择。
 /// </summary>
 public sealed partial class OptiScalerBuildItemViewModel : ObservableObject
 {
@@ -41,20 +41,8 @@ public sealed partial class OptiScalerBuildItemViewModel : ObservableObject
     /// <summary>来源标签（hdr / dlss5 …）</summary>
     public string TagsText { get; init; } = string.Empty;
 
-    /// <summary>
-    /// 卡片标题：来源名 + 版本。
-    /// 现在**一个构建一张卡片**（用户要的「多个 opt 单选、点卡片就换」），
-    /// 所以同一个来源的多版必须靠版本号区分。
-    /// </summary>
-    public string Title
-    {
-        get
-        {
-            string name = string.IsNullOrWhiteSpace(SourceName) ? SourceId : SourceName;
-            string? version = CurrentBuild?.Version;
-            return string.IsNullOrWhiteSpace(version) ? name : $"{name}  ·  {version}";
-        }
-    }
+    /// <summary>标题标识 Opt 来源；具体版本由卡片内的版本选择器显示。</summary>
+    public string Title => string.IsNullOrWhiteSpace(SourceName) ? SourceId : SourceName;
 
     /// <summary>「切换版本」下拉的选项（这个来源装在本地的版本，新 → 旧）</summary>
     public ObservableCollection<string> BuildOptions { get; } = [];
@@ -129,11 +117,13 @@ public sealed partial class OptiScalerBuildItemViewModel : ObservableObject
         {
             if (!SetProperty(ref _isBusy, value)) return;
             OnPropertyChanged(nameof(SettingsEnabled));
+            OnPropertyChanged(nameof(CanSelectVersion));
             UpdateQuickEditingState();
         }
     }
 
     public bool SettingsEnabled => HasQuickConfig && !IsBusy;
+    public bool CanSelectVersion => !IsBusy && !IsQuickLoading;
 
     private bool _isQuickLoading;
     public bool IsQuickLoading
@@ -143,6 +133,7 @@ public sealed partial class OptiScalerBuildItemViewModel : ObservableObject
         {
             if (!SetProperty(ref _isQuickLoading, value)) return;
             OnPropertyChanged(nameof(QuickLoadingVisibility));
+            OnPropertyChanged(nameof(CanSelectVersion));
             UpdateQuickEditingState();
         }
     }
@@ -155,7 +146,7 @@ public sealed partial class OptiScalerBuildItemViewModel : ObservableObject
     }
 
     /// <summary>换版本时回调页面（页面用 _loading 屏蔽加载期的那次）</summary>
-    internal Action<OptiScalerBuildItemViewModel, string?>? BuildChanged { get; set; }
+    internal Action<OptiScalerBuildItemViewModel, string?, string?>? BuildChanged { get; set; }
 
     /// <summary>把本地装到的构建铺进下拉并选中指定的那个（选过的不属于这个来源就选最新的）</summary>
     public void SetBuilds(IReadOnlyList<OptiScalerBuild> builds, string? selectedId)
@@ -199,7 +190,7 @@ public sealed partial class OptiScalerBuildItemViewModel : ObservableObject
         NotifyBuildDerived();
     }
 
-    partial void OnSelectedBuildOptionChanged(string? value)
+    partial void OnSelectedBuildOptionChanged(string? oldValue, string? newValue)
     {
         NotifyBuildDerived();
 
@@ -208,7 +199,20 @@ public sealed partial class OptiScalerBuildItemViewModel : ObservableObject
             return;
         }
 
-        BuildChanged?.Invoke(this, CurrentBuildId);
+        string? previousId = oldValue is not null && _labelToId.TryGetValue(oldValue, out var id) ? id : null;
+        BuildChanged?.Invoke(this, CurrentBuildId, previousId);
+    }
+
+    /// <summary>Restore a failed version switch without starting another selection transaction.</summary>
+    public void RestoreBuildOption(string buildId)
+    {
+        _suppressBuildChange = true;
+        try
+        {
+            SelectedBuildOption = _labelToId.FirstOrDefault(pair =>
+                string.Equals(pair.Value, buildId, StringComparison.OrdinalIgnoreCase)).Key;
+        }
+        finally { _suppressBuildChange = false; }
     }
 
     private void NotifyBuildDerived()
@@ -504,11 +508,11 @@ public sealed partial class OptiScalerPage : PageBase
             _selectedNrVersion = snapshot.Nr;
             if (library is not null)
             {
-                // 一个构建一张卡片，点一下就是单选（用户：以前多个 opt 单选、点卡片就换）。
-                // 不再按来源分组折叠成一个下拉 —— 那样卡片本身点不动，用户找不到地方选。
-                // （List() 本身就是新装的在前，顺序照旧）
-                foreach (BuildSnapshot row in snapshot.Rows)
+                // Same source, one card; retain the game-selected version and library order.
+                foreach (var group in snapshot.Rows.GroupBy(row => row.Build.SourceId, StringComparer.OrdinalIgnoreCase))
                 {
+                    BuildSnapshot row = group.FirstOrDefault(r =>
+                        string.Equals(r.Build.Id, snapshot.SelectedId, StringComparison.OrdinalIgnoreCase)) ?? group.First();
                     OptiScalerBuild build = row.Build;
                     OptiScalerSource? source = row.Source;
 
@@ -520,7 +524,7 @@ public sealed partial class OptiScalerPage : PageBase
                         TagsText = source?.Tags is { Length: > 0 } tags ? string.Join(" ", tags) : string.Empty,
                     };
 
-                    item.SetBuilds([build], snapshot.SelectedId);
+                    item.SetBuilds(group.Select(r => r.Build).ToArray(), snapshot.SelectedId);
                     item.BuildChanged = OnBuildChanged;
                     AttachPreset(item, row.Preset);
                     _items.Add(item);
@@ -531,14 +535,15 @@ public sealed partial class OptiScalerPage : PageBase
 
             TextBlock_Count.Text = _items.Count == 0
                 ? "一个构建都没有 —— 先到左下角「全局插件 → OptiScaler」里下一个。"
-                : $"共 {_items.Count} 个构建，点卡片选一个。";
+                : $"共 {_items.Count} 种 Opt、{snapshot.Rows.Count} 个版本；卡片选 Opt，卡片内切换版本。";
 
             OptiScalerBuildItemViewModel? inUse = _items.FirstOrDefault(i => i.IsInUse);
             TextBlock_Status.Text = inUse is null
                 ? "这个游戏还没选构建 —— 点击卡片标题、空白处或单选圈选择。"
                 : $"这个游戏用：{inUse.Title} · {inUse.SelectedBuildOption}";
             MotionAnimations.PlayListEntrance(OptiScalerSourceList);
-            _logger.LogInformation("OptiScaler page loaded {Count} builds for {Game}", _items.Count, gameName);
+            _logger.LogInformation("OptiScaler page loaded {Sources} sources / {Builds} builds for {Game}",
+                _items.Count, snapshot.Rows.Count, gameName);
         }
         catch (OperationCanceledException) when (operation.Token.IsCancellationRequested) { }
         catch (Exception ex)
@@ -698,21 +703,39 @@ public sealed partial class OptiScalerPage : PageBase
         }
     }
 
-    /// <summary>Only an explicit card/radio action selects and enables this build.</summary>
-    private async void OnBuildChanged(OptiScalerBuildItemViewModel item, string? buildId)
+    /// <summary>Only explicit card/radio or version actions select a build; settings never do.</summary>
+    private async void OnBuildChanged(OptiScalerBuildItemViewModel item, string? buildId, string? previousBuildId = null)
     {
         if (_loading || _selectingBuild || item.IsBusy || _gameId is not { } game
-            || string.IsNullOrWhiteSpace(buildId) || !_items.Contains(item)) return;
-        if (item.IsInUse && AppConfig.GetUseOptiScalerLaunchOption(game)) return;
+            || string.IsNullOrWhiteSpace(buildId) || !_items.Contains(item))
+        {
+            if (previousBuildId is not null) item.RestoreBuildOption(previousBuildId);
+            return;
+        }
+        if (item.IsInUse && AppConfig.GetUseOptiScalerLaunchOption(game)
+            && string.Equals(AppConfig.GetSelectedOptiScalerId(game), buildId, StringComparison.OrdinalIgnoreCase)) return;
         long generation = PageGeneration;
         string? original = item.CurrentBuild?.DllPath;
+        if (string.IsNullOrWhiteSpace(original))
+        {
+            if (previousBuildId is not null) item.RestoreBuildOption(previousBuildId);
+            TextBlock_Status.Text = "这个版本没有可注入的 OptiScaler.dll，请选择另一个版本。";
+            return;
+        }
+        string? buildDirectory = item.BuildDirectory;
+        bool switched = false;
         var library = CreateLibrary();
         _selectingBuild = true;
         item.IsBusy = true;
         try
         {
-            await RunIoAsync(() =>
+            var configuration = await RunIoAsync(() =>
             {
+                // Version-specific settings must be read before committing a switch.
+                PresetSnapshot? preset = previousBuildId is null ? null
+                    : ReadPresetSnapshot(item.SourceId, buildDirectory, game.GameBiz.ToString());
+                string[]? quick = previousBuildId is not null && item.Expanded
+                    ? ReadQuickValues(buildDirectory, game.GameBiz.ToString()) : null;
                 string? nr = AppConfig.GetGameNrVersion(game, "opti");
                 if (original is not null && (nr is not null
                     || Directory.Exists(NrRuntimeLibrary.OptiDirectory(AppConfig.CacheRoot, game.GameBiz.Value, buildId))))
@@ -722,19 +745,27 @@ public sealed partial class OptiScalerPage : PageBase
                 // Select validates the library by enumerating it. Keep that work off the UI thread.
                 try { library?.Select(buildId); }
                 catch (Exception ex) { _logger.LogWarning(ex, "Sync global OptiScaler selection"); }
-                return true;
+                return (Preset: preset, Quick: quick);
             }, PageCancellationToken);
+            switched = true;
             if (!IsCurrentItem(item, game, generation)) return;
+            if (configuration.Preset is not null) AttachPreset(item, configuration.Preset);
+            if (configuration.Quick is not null) SetQuickValues(item, configuration.Quick);
+            else if (previousBuildId is not null) item.QuickItems = [];
             foreach (var other in _items) other.IsInUse = ReferenceEquals(other, item);
             TextBlock_Status.Text = $"这个游戏改用：{item.Title} · {item.SelectedBuildOption}";
-            // Presets and quick values belong to each build already. Selecting does not rebind them.
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
             if (IsCurrentItem(item, game, generation)) TextBlock_Status.Text = "构建选择失败：" + ex.Message;
         }
-        finally { item.IsBusy = false; _selectingBuild = false; }
+        finally
+        {
+            if (!switched && previousBuildId is not null) item.RestoreBuildOption(previousBuildId);
+            item.IsBusy = false;
+            _selectingBuild = false;
+        }
     }
 
     private void Button_OpenLibrary_Click(object sender, RoutedEventArgs e)

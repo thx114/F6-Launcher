@@ -63,8 +63,10 @@ string root = Path.Combine(Path.GetTempPath(), "hys-launcher-policy-" + Guid.New
 Directory.CreateDirectory(root);
 try
 {
+    Check(PortableUpdatePolicy.ReadVersionTarget(root, "exe_path=app-1.2.3/F6Launcher.exe")
+        == Path.Combine(root, "app-1.2.3", "F6Launcher.exe"), "F6 version selection");
     Check(PortableUpdatePolicy.ReadVersionTarget(root, "exe_path=app-1.2.3/HoYoShadeHub.exe")
-        == Path.Combine(root, "app-1.2.3", "HoYoShadeHub.exe"), "Contained version selection");
+        == Path.Combine(root, "app-1.2.3", "HoYoShadeHub.exe"), "Legacy version selection remains supported");
     Reject(() => PortableUpdatePolicy.GetArchiveTarget(root, "../outside.exe"), "Update path traversal rejected");
     Reject(() => PortableUpdatePolicy.ReadVersionTarget(root, "exe_path=app-a/HoYoShadeHub.exe\nexe_path=app-b/HoYoShadeHub.exe"),
         "Ambiguous version selection rejected");

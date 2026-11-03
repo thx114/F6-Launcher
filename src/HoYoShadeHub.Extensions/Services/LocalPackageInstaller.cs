@@ -266,7 +266,8 @@ public sealed class LocalPackageInstaller
     private static bool IsLauncherAppPackage(List<string> names)
         => names.Any(n => n.Equals("version.ini", StringComparison.OrdinalIgnoreCase))
            || names.Any(n => n.StartsWith("app-", StringComparison.OrdinalIgnoreCase)
-                             && n.EndsWith("/HoYoShadeHub.exe", StringComparison.OrdinalIgnoreCase));
+                             && (n.EndsWith("/F6Launcher.exe", StringComparison.OrdinalIgnoreCase)
+                                 || n.EndsWith("/HoYoShadeHub.exe", StringComparison.OrdinalIgnoreCase)));
 
     /// <summary>
     /// 是不是「一键覆盖包」：顶层带 <c>filelist.json</c>（权威标记），

@@ -15,7 +15,7 @@ results=[]
 for path in args.archives:
     with zipfile.ZipFile(path) as z:
         names=set(z.namelist())
-        app=[n for n in names if re.fullmatch(r'app-[^/]+/HoYoShadeHub.exe',n)]
+        app=[n for n in names if re.fullmatch(r'app-[^/]+/F6Launcher.exe',n)]
         if len(app)!=1: raise ValueError('Expected exactly one application version')
         prefix=app[0].rsplit('/',1)[0]+'/'
         for location in ('',prefix):

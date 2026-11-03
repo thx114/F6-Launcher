@@ -48,7 +48,7 @@ public static class AppConfig
     public static readonly JsonSerializerOptions JsonSerializerOptions = new JsonSerializerOptions { WriteIndented = true, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
 
-    public static string HoYoShadeHubExecutePath => Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, "HoYoShadeHub.exe");
+    public static string HoYoShadeHubExecutePath => Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, "F6Launcher.exe");
 
 
 
