@@ -8,6 +8,8 @@
 
 Full ZIP 的底层入口是 `package-full.ps1`；`package.ps1` 只生成普通便携包。`publish.ps1` 是本地发布准备入口，调用 Full 脚本后从同一个 Full ZIP 提取普通更新包、生成本分支元数据并检查许可、图标和网络策略，不自动上传 GitHub。`build.ps1` 仅保留为普通便携目录构建的兼容入口。
 
+当前远端发布规则：GitHub 只上传普通便携 ZIP；Full 成品仅留在本地，不上传 F5 覆盖包、兼容命名副本、独立许可文件或校验附件。两种本地成品仍需通过许可和内容校验，普通 ZIP 包内必须保留原始 MIT `LICENSE`、`Starward_LICENSE` 和 `NOTICE.md`。
+
 ## 前置条件
 
 - 在仓库根目录运行 PowerShell。
