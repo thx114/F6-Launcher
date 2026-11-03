@@ -35,3 +35,7 @@
 本文件描述实现和处理策略；远端实际执行结果以 `artifacts/fork-compliance-20261103/` 的发布回执和最终远端核验为准。上游回复文本位于 `UPSTREAM-REPLY-DRAFT-F6.md`，未经用户明确要求不发送。
 
 最终远端核验：v1.4.8 已公开，只有一个普通 ZIP 附件，大小 195520239 字节，SHA256 为 `7E1CC0B8FAED6D42E428F060734920BBA8C2B5434CA07D89EF61CED7ADDEC515`；原 35 个公开历史发行已转为草稿并逐项确认原资产 ID、名称、大小保留，未删除标签或历史资产。匿名 release 列表只显示 v1.4.8，旧 1.4.7.1 Full 下载返回 404。F5 本轮未上传，旧 F5 附件随历史发行撤回公开下载。
+
+## Release pause requested by maintainer (2026-11-04)
+
+The preceding publication result is a historical snapshot. v1.4.8 is now draft; its existing ordinary ZIP is retained without uploading or deleting assets. Stable and preview metadata use 0.0.0 as a no-update sentinel, clear download links, and record release_paused=true. DisableAutoUpdate alone is insufficient because existing clients also use it for framework-update UI. The historical 1.4.8 descriptor retains its version but no downloadable package. No old version is offered as a fallback. Local 1.4.8.1 remains for maintainer testing and has no published release or asset.
