@@ -2,6 +2,22 @@
 
 已按用户最后确认制作冻结 F5 覆盖包；三游戏均选择 `official/DLSS F5`。
 
+## 当前修订：仅覆盖包 F5 v4.2，兼容启动器 1.4.7.1
+
+用户要求只修改覆盖包；不发布新启动器版本。v4.1 只启用 Opt，没有关闭其他组件；`set_opt_config(if_missing:true)` 在已有 profile 时不选择或应用配置。
+
+当前交付为 `build/release/[原铁绝]F5_v4.2.zip`。使用现有 1.4.7.1 启动器，重新导入 ZIP 并确认动作即可。三个游戏顺序统一为：
+
+`require_launcher_version(1.4.7.1)` → 六个 `set_launch_option(enabled:false)` → `set_opt_build(official/DLSS F5)` → `import_opt_config` → `set_opt_config(if_missing:true)` → `set_opt_config` → `set_opt_nr(file+sha256)`。
+
+六个现有启动项为 `useXxmiInject`、`useModules`、`useHoYoShade`、`useOpenHoYoShade`、`useFpsUnlock`、`useOptiScaler`。随后 `set_opt_build` 重新启用 Opt；只修改正在应用动作的游戏。
+
+现有 1.4.7.1 动作没有 Rocket、Starward、Blender、跳过 HoYoShade 注入器的写入接口；只改覆盖包不能清空这些项，若已勾选需手动取消。本包不包含未知新动作，不写数据库或启动器二进制。
+
+配置先按旧接口初始化缺失 main/profile，再通过普通 `set_opt_config` 强制应用包内对应游戏的 F5 配置，并保存下拉选择及 follow 绑定；已有 profile 也会切换。重新导入开启新的 once 批次，日常启动不重复覆盖后续设置。
+
+v4.2 仅修改动作及交付元数据，所有冻结 Opt/NR DLL 和包内 INI 的逐项 SHA256 保持 v4.1 内容不变。本轮只核验打包文件，运行、UI 和游戏测试由用户执行。下面的 v4.1 说明与历史验证记录不代表 v4.2 运行验收。
+
 | 游戏 | NR 版本 | DLL SHA256 |
 |---|---|---|
 | 原神 `hk4e*` | 原神v4_预设A_1080p5000 | `094D2B0E28EEB65A4250F99EEE8230B1BC9BEFCB459331E569DDB76B26BCC6CB` |
@@ -10,7 +26,7 @@
 
 SF 已对照制作时远端 `main:catalog/dll-fingerprints.json` 的最新收录；没有把 SF-lora7 或其他自定义 DLL 冒认为标准 SF。
 
-## 交付与安装顺序
+## 历史 v4.1 交付与安装顺序
 
 1. 推荐先升级启动器至 **1.4.7.1**。新安装使用 `HoYoShadeHub_Portable_1.4.7.1_x64_Full.zip`，其中包含 HoYoShade 框架；现有安装可通过启动器检查更新使用普通便携更新包。1.4.7.1 修复首次导入时丢失 NR 子目录的问题，并支持包的最低版本检查，不再应用旧增量 ZIP。
 2. 游戏覆盖包：`D:\CODE\HoyoDLSS5\build\release\[原铁绝]F5_v4.1.zip`。将原始 ZIP 导入全局插件页；再到对应游戏插件页确认一次性动作。三款游戏都先执行 `require_launcher_version(minVersion: "1.4.7.1")`。此前已经导入失败的安装也需重新导入新 ZIP，程序升级本身不会恢复被旧版删除的 NR 子目录。
@@ -26,7 +42,7 @@ SF 已对照制作时远端 `main:catalog/dll-fingerprints.json` 的最新收录
 | F5 三游戏覆盖包 | 989518202 | `01C1995E99C4DA16FB87AD4D5BFB4B2F44E559F20F3301C9A555197E97277CC1` |
 | 历史 app-1.4.6.12 专用增量（1.4.7 不需要） | 2294437 | `26AF58651BF2C4B453C8EA94A1EF1132D552739617BC955B97FCC9385C4BED28` |
 
-## 配置与内容边界
+## 历史 v4.1 配置与内容边界
 
 冻结目录：`D:\APPS\test\TEST\HoYoShadeHub_Portable_1.4.5.0_x64_Full\OptiScaler\official\DLSS F5`。主 DLL 为 33359360 字节，LastWriteTimeUtc `2026-11-03T02:15:49.8266061Z`，SHA256 `5986BC7377A34A5451ED14DC0CE481A20F30F8808B966ADC47583CF845986BB3`。
 
@@ -36,7 +52,7 @@ SF 已对照制作时远端 `main:catalog/dll-fingerprints.json` 的最新收录
 
 不向官方目录直接覆盖 root INI 或 profiles。已有游戏 profile 和对应 preset/follow 绑定保留，仅缺失 profile 才从对应 F5 便携配置初始化。便携转换只处理日志路径、Plugins Path 和 OptiDllPath；其余质量、倍率、方向参数沿用冻结配置。全局 Opt 选择不改变。
 
-## 验证证据
+## 历史验证证据
 
 - Release 构建实际 exit 0；最终增量构建 0 错误、89 警告。
 - 游戏 ZIP CRC、条目集合、逐条 SHA256、源内容未变化校验通过；程序更新 14 个变更文件逐条校验。

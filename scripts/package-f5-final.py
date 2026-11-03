@@ -115,23 +115,26 @@ def main():
         generated[f'GamePack/{game}/{config}'] = PORTABLE.portable_ini((source / profile).read_bytes(), source)
         steps = [
             {'action': 'require_launcher_version', 'minVersion': '1.4.7.1'},
+            *({'action': 'set_launch_option', 'key': key, 'enabled': False, 'once': True}
+              for key in ('useXxmiInject', 'useModules', 'useHoYoShade', 'useOpenHoYoShade', 'useFpsUnlock', 'useOptiScaler')),
             {'action': 'set_opt_build', 'build': 'official/DLSS F5', 'once': True},
             {'action': 'import_opt_config', 'file': config, 'name': name, 'once': True},
             {'action': 'set_opt_config', 'name': name, 'if_missing': True, 'once': True},
+            {'action': 'set_opt_config', 'name': name, 'once': True},
             {'action': 'set_opt_nr', 'version': version, 'file': 'NR/nvngx_dlssnr.dll', 'sha256': sha, 'download': False, 'once': True},
         ]
         generated[f'GamePack/{game}/auto.json'] = encode({'actions': [{'name': name, 'runOnLaunch': True, 'steps': steps}]})
     generated[PREFIX + 'build.json'] = encode({
         'sourceId': 'official', 'version': 'DLSS F5', 'assetName': output.name,
-        'packageVersion': 'final-20261103', 'main': pins['OptiScaler.dll'],
-        'requiresLauncherCapabilities': ['set_opt_nr.file.sha256', 'set_opt_config.if_missing', 'require_launcher_version'],
+        'packageVersion': 'v4.2', 'main': pins['OptiScaler.dll'],
+        'requiresLauncherCapabilities': ['set_opt_nr.file.sha256', 'set_opt_config.if_missing', 'set_opt_config', 'require_launcher_version', 'set_launch_option'],
         'minLauncherVersion': '1.4.7.1',
         'defaultNr': NR['sf'][0], 'gameNr': {g: NR[key][0] for g, (_, _, key) in GAMES.items()},
         'gameTestedByPackaging': False,
     })
     generated['README-F5-Final.md'] = '''# F5 三游戏覆盖包（2026-11-03 冻结版）
 
-先将启动器升级至 1.4.7.1 或更新版本，再将本原始 ZIP 导入启动器全局插件页。
+兼容已有启动器 1.4.7.1；直接将本原始 ZIP 导入启动器全局插件页。
 新安装使用 Full 包；游戏覆盖包直接导入，不先解压。不再使用 app-1.4.6.12 专用旧增量。
 动作首先检查启动器最低版本，不足时提示更新并停止后续步骤。
 在各游戏插件页确认一次性动作后，三款游戏分别选择 official/DLSS F5：
@@ -139,7 +142,9 @@ def main():
 - 崩铁与绝区零：310.9.16-SF（制作时启动器远端目录收录的最新 SF）。
 
 NR DLL 随包提供，动作以 SHA256 校验后归档、硬链接至独立游戏 runtime，不依赖下载。
-已有游戏 profile 保留，只有缺失时才初始化对应便携配置；不清质量、倍率、分辨率或方向设置。
+确认动作后关闭当前游戏的 XXMI、模块、HoYoShade、OpenHoYoShade、帧率解锁和旧 Opt，再启用 Opt 并选择 F5。
+导入配置后先以 if_missing:true 初始化缺失 profile，再正常选择并应用；已有 profile 也切换到包内 F5 配置。
+现有动作不能关闭 Rocket、Starward、Blender 或跳过 HoYoShade 注入器；这些项若已勾选请手动取消。
 官方目录不携带主 INI 或 profiles，避免直接导入覆盖用户设置。共享默认 NR 为 SF，原神专属版本由动作设置。
 动作是 once；不携带本机执行账本。不改变全局 Opt 选择，不启停游戏或启动器。
 只包含冻结 F5、现有运行依赖、许可与三份游戏初始化配置。不包含 F6、ReShade 核心、外置原神 Bridge、数据库、日志、转储或截图。
@@ -187,8 +192,8 @@ NR DLL 随包提供，动作以 SHA256 校验后归档、硬链接至独立游�
                 archive.writestr(name, data)
                 rows.append({'path': name, 'size': len(data), 'sha256': hashlib.sha256(data).hexdigest()})
             manifest = {
-                'hysxOverlay': 1, 'name': 'F5 三游戏覆盖包', 'version': 'final-20261103-launcher-1.4.7.1',
-                'note': '要求启动器至少 1.4.7.1；先更新，再导入。已有游戏配置保留。',
+                'hysxOverlay': 1, 'name': 'F5 三游戏覆盖包', 'version': 'f5-v4.2-launcher-1.4.7.1',
+                'note': '兼容启动器 1.4.7.1；关闭受支持的启动项后启用 Opt，并应用各游戏 F5 配置。',
                 'gamePacks': [{'game': g, 'path': 'GamePack/' + g} for g in GAMES],
                 'targets': [{'from': 'OptiScaler', 'to': 'optiscaler'}],
                 'optiscaler': {'sourceId': 'official', 'version': 'DLSS F5', 'select': False},
