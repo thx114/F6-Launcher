@@ -177,7 +177,7 @@
                                     Click="Button_ExpandQuick_Click"
                                     IsEnabled="{x:Bind SettingsEnabled, Mode=OneWay}"
                                     Tag="{x:Bind}"
-                                    ToolTipService.ToolTip="展开扩展配置（FG / NR / Hook 等 20 项快捷开关）"
+                                    ToolTipService.ToolTip="展开扩展配置（FG / NR / Hook 等 13 项设置）"
                                     Visibility="{x:Bind ExpandButtonVisibility, Mode=OneWay}">
                                 <FontIcon FontSize="12" Glyph="&#xE70D;" />
                             </Button>
@@ -197,7 +197,7 @@
                                 <FontIcon FontSize="12" Glyph="&#xE70E;" />
                             </Button>
 
-                            <!--  扩展配置：20 项快捷开关，写进当前配置（或 profile）  -->
+                            <!--  扩展配置：只实例化每行实际需要的编辑器。  -->
                             <StackPanel x:Name="OptiQuickConfig" Grid.Row="1" Tapped="Settings_Tapped"
                                         Grid.ColumnSpan="3"
                                         Margin="0,6,0,0"
@@ -208,6 +208,9 @@
                                            Style="{ThemeResource CaptionTextBlockStyle}"
                                            Text="扩展配置（写进当前生效的 OptiScaler 配置；auto = 跟随默认）"
                                            TextWrapping="Wrap" />
+                                <TextBlock Style="{ThemeResource CaptionTextBlockStyle}"
+                                           Text="正在读取配置…"
+                                           Visibility="{x:Bind QuickLoadingVisibility, Mode=OneWay}" />
                                 <ItemsControl ItemsSource="{x:Bind QuickItems, Mode=OneWay}">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate x:DataType="local:OptiQuickItemViewModel">
@@ -222,33 +225,36 @@
                                                            TextWrapping="Wrap"
                                                            ToolTipService.ToolTip="{x:Bind ToolTip, Mode=OneWay}" />
                                                 <!--  三态：auto / 开 / 关  -->
-                                                <ComboBox Grid.Column="1"
+                                                <ComboBox x:Name="TriStateEditor"
+                                                          x:Load="{x:Bind IsTriState}"
+                                                          Grid.Column="1"
                                                           MinWidth="170"
                                                           IsEnabled="{x:Bind CanEdit, Mode=OneWay}"
-                                                          SelectedIndex="{x:Bind TriIndex, Mode=TwoWay}"
-                                                          Visibility="{x:Bind TriVisibility, Mode=OneWay}">
+                                                          SelectedIndex="{x:Bind TriIndex, Mode=TwoWay}">
                                                     <ComboBoxItem Content="auto（默认）" />
                                                     <ComboBoxItem Content="开" />
                                                     <ComboBoxItem Content="关" />
                                                 </ComboBox>
                                                 <!--  选项：从给定取值里选  -->
-                                                <ComboBox Grid.Column="1"
+                                                <ComboBox x:Name="OptionEditor"
+                                                          x:Load="{x:Bind IsOption}"
+                                                          Grid.Column="1"
                                                           MinWidth="170"
                                                           IsEnabled="{x:Bind CanEdit, Mode=OneWay}"
                                                           DisplayMemberPath="Label"
                                                           ItemsSource="{x:Bind Choices, Mode=OneWay}"
-                                                          SelectedIndex="{x:Bind OptionIndex, Mode=TwoWay}"
-                                                          Visibility="{x:Bind OptionVisibility, Mode=OneWay}" />
+                                                          SelectedIndex="{x:Bind OptionIndex, Mode=TwoWay}" />
                                                 <!--  数字  -->
-                                                <NumberBox Grid.Column="1"
+                                                <NumberBox x:Name="NumberEditor"
+                                                           x:Load="{x:Bind IsNumber}"
+                                                           Grid.Column="1"
                                                            MinWidth="170"
                                                            IsEnabled="{x:Bind CanEdit, Mode=OneWay}"
                                                            Maximum="{x:Bind NumberMaximum}"
                                                            Minimum="{x:Bind NumberMinimum}"
                                                            SpinButtonPlacementMode="Compact"
                                                            PlaceholderText="auto"
-                                                           Value="{x:Bind NumberValue, Mode=TwoWay}"
-                                                           Visibility="{x:Bind NumberVisibility, Mode=OneWay}" />
+                                                           Value="{x:Bind NumberValue, Mode=TwoWay}" />
                                             </Grid>
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>

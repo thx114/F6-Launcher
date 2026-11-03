@@ -16,8 +16,8 @@ internal static class QuickConfigOptionTests
         }
 
         // ===== OptiScaler 快捷配置 =====
-        Check(OptiScalerQuickOptions.Descriptors.Count == 20, "OptiScaler 快捷项 = 20");
-        Check(OptiScalerQuickOptions.Descriptors.Select(d => d.Section + "/" + d.Key).Distinct().Count() == 20,
+        Check(OptiScalerQuickOptions.Descriptors.Count == 13, "OptiScaler 快捷项 = 13");
+        Check(OptiScalerQuickOptions.Descriptors.Select(d => d.Section + "/" + d.Key).Distinct().Count() == 13,
             "OptiScaler 快捷项节/键无重复");
 
         const string optiIni = "[FrameGen]\nEnabled = true\nFGInput = upscaler\n\n[DLSSG]\nAdaMfgUnlock = true\n";
@@ -31,11 +31,11 @@ internal static class QuickConfigOptionTests
         Check(updated.Contains("Enabled = true") && updated.Contains("AdaMfgUnlock = true"),
             "写 FGOutput 不动其它键");
         string appended = OptiScalerQuickOptions.ApplyValue("[Upscalers]\nDx11Upscaler = auto\n",
-            OptiScalerQuickOptions.Descriptors.First(d => d.Section == "Spoofing"), "true");
-        Check(appended.Contains("[Spoofing]") && appended.EndsWith("SpoofHAGS = true\n"),
+            OptiScalerQuickOptions.Descriptors.First(d => d.Section == "Hooks"), "true");
+        Check(appended.Contains("[Hooks]") && appended.EndsWith("EarlyHooking = true\n"),
             "缺节时补节");
         Check(OptiScalerQuickOptions.ReadValue(appended,
-            OptiScalerQuickOptions.Descriptors.First(d => d.Section == "Spoofing")) == "true", "补节后读回");
+            OptiScalerQuickOptions.Descriptors.First(d => d.Section == "Hooks")) == "true", "补节后读回");
 
         // ===== ReShade 深度宏 =====
         Check(ReShadeDepthOptions.All.Count == 6, "深度项 = 6");

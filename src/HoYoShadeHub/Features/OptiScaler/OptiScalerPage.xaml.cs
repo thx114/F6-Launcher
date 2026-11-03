@@ -129,11 +129,30 @@ public sealed partial class OptiScalerBuildItemViewModel : ObservableObject
         {
             if (!SetProperty(ref _isBusy, value)) return;
             OnPropertyChanged(nameof(SettingsEnabled));
-            foreach (var quick in QuickItems) quick.CanEdit = !value;
+            UpdateQuickEditingState();
         }
     }
 
     public bool SettingsEnabled => HasQuickConfig && !IsBusy;
+
+    private bool _isQuickLoading;
+    public bool IsQuickLoading
+    {
+        get => _isQuickLoading;
+        set
+        {
+            if (!SetProperty(ref _isQuickLoading, value)) return;
+            OnPropertyChanged(nameof(QuickLoadingVisibility));
+            UpdateQuickEditingState();
+        }
+    }
+
+    public Visibility QuickLoadingVisibility => IsQuickLoading ? Visibility.Visible : Visibility.Collapsed;
+
+    private void UpdateQuickEditingState()
+    {
+        foreach (var quick in QuickItems) quick.CanEdit = !IsBusy && !IsQuickLoading;
+    }
 
     /// <summary>换版本时回调页面（页面用 _loading 屏蔽加载期的那次）</summary>
     internal Action<OptiScalerBuildItemViewModel, string?>? BuildChanged { get; set; }
@@ -248,8 +267,9 @@ public sealed partial class OptiScalerBuildItemViewModel : ObservableObject
     /// <summary>这个卡片能不能展开配置（没有可用构建目录就不行）</summary>
     public bool HasQuickConfig => !string.IsNullOrWhiteSpace(BuildDirectory);
 
-    /// <summary>扩展配置项（20 项，静态清单见 <see cref="OptiScalerQuickOptions"/>）</summary>
-    public ObservableCollection<OptiQuickItemViewModel> QuickItems { get; } = [];
+    /// <summary>预填好值后一次发布，避免逐项添加触发模板反复布局。</summary>
+    [ObservableProperty]
+    private IReadOnlyList<OptiQuickItemViewModel> quickItems = [];
 }
 
 /// <summary>卡片扩展配置里的一行（三态 / 选项 / 数字三种形态，按描述子切换控件）</summary>
@@ -260,10 +280,11 @@ public sealed partial class OptiQuickItemViewModel : ObservableObject
     private bool _suppress;
     private string _lastValue = "auto";
 
-    internal OptiQuickItemViewModel(OptiQuickDescriptor descriptor, Func<OptiQuickDescriptor, string, Task<bool>> commit)
+    internal OptiQuickItemViewModel(OptiQuickDescriptor descriptor, Func<OptiQuickDescriptor, string, Task<bool>> commit, string initialValue)
     {
         _descriptor = descriptor;
         _commit = commit;
+        LoadValue(initialValue);
     }
 
     public OptiQuickDescriptor Descriptor => _descriptor;
@@ -276,9 +297,9 @@ public sealed partial class OptiQuickItemViewModel : ObservableObject
     [ObservableProperty]
     private bool canEdit = true;
 
-    public Visibility TriVisibility => _descriptor.Kind == OptiQuickKind.TriState ? Visibility.Visible : Visibility.Collapsed;
-    public Visibility OptionVisibility => _descriptor.Kind == OptiQuickKind.Option ? Visibility.Visible : Visibility.Collapsed;
-    public Visibility NumberVisibility => _descriptor.Kind == OptiQuickKind.Number ? Visibility.Visible : Visibility.Collapsed;
+    public bool IsTriState => _descriptor.Kind == OptiQuickKind.TriState;
+    public bool IsOption => _descriptor.Kind == OptiQuickKind.Option;
+    public bool IsNumber => _descriptor.Kind == OptiQuickKind.Number;
 
     /// <summary>三态下拉的当前下标（0=auto 1=开 2=关）</summary>
     [ObservableProperty]
@@ -774,7 +795,7 @@ public sealed partial class OptiScalerPage : PageBase
         finally { item.PresetChanged = OnPresetChanged; }
     }
 
-    #region 卡片扩展配置（20 项快捷开关）
+    #region 卡片扩展配置
 
     /// <summary>点卡片右下角的展开 / 收起箭头（两个静态按钮，靠 Visibility 切换）</summary>
     private async void Button_ExpandQuick_Click(object sender, RoutedEventArgs e)
@@ -782,26 +803,11 @@ public sealed partial class OptiScalerPage : PageBase
         if (sender is FrameworkElement { Tag: OptiScalerBuildItemViewModel item })
         {
             if (item.IsBusy || _loading) return;
-            if (!item.Expanded) await ReloadQuickValuesAsync(item);
             if (PageCancellationToken.IsCancellationRequested || !_items.Contains(item)) return;
             item.Expanded = !item.Expanded;
-            MotionAnimations.PlayItemAreaExpand(OptiScalerSourceList, item, "OptiQuickConfig", item.Expanded);
-        }
-    }
-
-    /// <summary>首次给卡片建 20 个快捷项（描述子是静态清单）</summary>
-    private void EnsureQuickItems(OptiScalerBuildItemViewModel item)
-    {
-        if (item.QuickItems.Count > 0)
-        {
-            return;
-        }
-
-        foreach (OptiQuickDescriptor descriptor in OptiScalerQuickOptions.Descriptors)
-        {
-            if (descriptor.Key is "SmoothMotion" or "HookOriginalNvngxOnly" or "AutoExposure") continue;
-            item.QuickItems.Add(new OptiQuickItemViewModel(descriptor,
-                (desc, value) => CommitQuickValueAsync(item, desc, value)));
+            // Height animation measured the whole editor tree and re-laid out every card each frame.
+            // Let visibility and the existing sibling reposition transition handle the size change.
+            if (item.Expanded) await ReloadQuickValuesAsync(item);
         }
     }
 
@@ -814,25 +820,49 @@ public sealed partial class OptiScalerPage : PageBase
         return File.Exists(profile) ? File.ReadAllText(profile) : string.Empty;
     }
 
-    private static void SetQuickValues(OptiScalerBuildItemViewModel item, string iniText)
+    private static string[] ReadQuickValues(string? buildDirectory, string gameKey)
     {
-        foreach (var quick in item.QuickItems)
-            quick.LoadValue(OptiScalerQuickOptions.ReadValue(iniText, quick.Descriptor));
+        string text = ReadQuickText(buildDirectory, gameKey);
+        return OptiScalerQuickOptions.Descriptors.Select(descriptor => OptiScalerQuickOptions.ReadValue(text, descriptor)).ToArray();
+    }
+
+    private void SetQuickValues(OptiScalerBuildItemViewModel item, IReadOnlyList<string> values)
+    {
+        if (item.QuickItems.Count == 0)
+        {
+            item.QuickItems = OptiScalerQuickOptions.Descriptors.Select((descriptor, index) =>
+                new OptiQuickItemViewModel(descriptor,
+                    (desc, value) => CommitQuickValueAsync(item, desc, value), values[index])
+                { CanEdit = !item.IsBusy && !item.IsQuickLoading }).ToArray();
+            return;
+        }
+        for (int i = 0; i < item.QuickItems.Count; i++) item.QuickItems[i].LoadValue(values[i]);
     }
 
     /// <summary>Collapsed cards do not read or create quick controls. One read per expansion.</summary>
     private async Task ReloadQuickValuesAsync(OptiScalerBuildItemViewModel item)
     {
-        if (_gameId is not { } game || item.IsBusy) return;
+        if (_gameId is not { } game || item.IsBusy || item.IsQuickLoading) return;
         long generation = PageGeneration;
         string? buildDirectory = item.BuildDirectory;
-        item.IsBusy = true;
+        string? preset = item.CurrentPreset;
+        CancellationToken token = PageCancellationToken;
+        var elapsed = Stopwatch.StartNew();
+        item.IsQuickLoading = true;
         try
         {
-            string text = await RunIoAsync(() => ReadQuickText(buildDirectory, game.GameBiz.ToString()), PageCancellationToken);
-            if (!IsCurrentItem(item, game, generation)) return;
-            EnsureQuickItems(item);
-            SetQuickValues(item, text);
+            // Serialize against this page's configuration writes, not the unrelated NR DLL work queue.
+            string[] values;
+            await _ioGate.WaitAsync(token);
+            try { values = await Task.Run(() => ReadQuickValues(buildDirectory, game.GameBiz.ToString()), token); }
+            finally { _ioGate.Release(); }
+            if (!IsCurrentItem(item, game, generation)
+                || !string.Equals(preset, item.CurrentPreset, StringComparison.Ordinal)
+                || !string.Equals(buildDirectory, item.BuildDirectory, StringComparison.OrdinalIgnoreCase)) return;
+            long readMs = elapsed.ElapsedMilliseconds;
+            SetQuickValues(item, values);
+            _logger.LogInformation("OptiScaler quick config: readMs={ReadMs}, publishMs={PublishMs}, rows={Rows}",
+                readMs, elapsed.ElapsedMilliseconds - readMs, item.QuickItems.Count);
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
@@ -840,7 +870,7 @@ public sealed partial class OptiScalerPage : PageBase
             _logger.LogWarning(ex, "Reload quick config values");
             if (IsCurrentItem(item, game, generation)) TextBlock_Status.Text = "读取扩展配置失败：" + ex.Message;
         }
-        finally { item.IsBusy = false; }
+        finally { item.IsQuickLoading = false; }
     }
 
     /// <summary>
@@ -849,7 +879,7 @@ public sealed partial class OptiScalerPage : PageBase
     /// </summary>
     private async Task<bool> CommitQuickValueAsync(OptiScalerBuildItemViewModel item, OptiQuickDescriptor descriptor, string value)
     {
-        if (_loading || item.IsBusy || _gameId is not { } game || item.BuildDirectory is not { } buildDirectory)
+        if (_loading || item.IsBusy || item.IsQuickLoading || _gameId is not { } game || item.BuildDirectory is not { } buildDirectory)
             return false;
         long generation = PageGeneration;
         item.IsBusy = true;
@@ -910,7 +940,7 @@ public sealed partial class OptiScalerPage : PageBase
         string? directory = item.BuildDirectory;
         string sourceId = item.SourceId;
         string buildId = item.CurrentBuildId;
-        bool reloadQuick = item.QuickItems.Count > 0;
+        bool reloadQuick = item.QuickItems.Count > 0 || item.Expanded;
         item.IsBusy = true;
         try
         {
@@ -935,7 +965,7 @@ public sealed partial class OptiScalerPage : PageBase
                 }
                 var snapshot = ReadPresetSnapshot(sourceId, directory, gameKey);
                 return (Message: message, Preset: snapshot,
-                    Quick: reloadQuick ? ReadQuickText(directory, gameKey) : null);
+                    Quick: reloadQuick ? ReadQuickValues(directory, gameKey) : null);
             }, PageCancellationToken);
             if (!IsCurrentItem(item, game, generation)) return;
             AttachPreset(item, result.Preset);
