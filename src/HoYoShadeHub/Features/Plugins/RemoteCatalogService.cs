@@ -220,7 +220,6 @@ internal static class RemoteCatalogService
         // 先把随包种子落到缓存（首跑离线也能用），再把缓存里的模块目录 / 条件表应用上
         //（打开页面就能用 —— 不管这次拉不拉）
         SeedFromBundle();
-        ModuleCatalogFile.Apply(ModulesCachePath);
         ApplyConditions();
         ApplyDllFingerprints();
 
@@ -256,7 +255,7 @@ internal static class RemoteCatalogService
             return new RemoteCatalogResult(false, false, false, false, "拉取失败（网络不通或仓库里还没有 catalog/ 文件）。");
         }
 
-        ModuleCatalogFile.Apply(ModulesCachePath);
+        if (modules) ModuleCatalogFile.Apply(ModulesCachePath);
         ApplyConditions();
         ApplyDllFingerprints();
 

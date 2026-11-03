@@ -703,7 +703,7 @@ public static class ModuleRegistry
         // 3) 多版本共存：List() 按安装时间倒序 → 取最新装的那份
         if (!module.IsDirect)
         {
-            foreach (OptiScalerBuild build in new OptiScalerLibrary(module.Directory).List())
+            foreach (OptiScalerBuild build in new OptiScalerLibrary(module.Directory).List(includeDirectorySize: false))
             {
                 string? dll = FindModuleInjectDll(module, build.Directory);
                 if (dll is not null && IsAcceptedModuleDll(module, dll))
@@ -746,7 +746,7 @@ public static class ModuleRegistry
             if (root.Length > 0)
             {
                 var library = new OptiScalerLibrary(root);
-                foreach (Extensions.Services.OptiScalerBuild build in library.List()
+                foreach (Extensions.Services.OptiScalerBuild build in library.List(includeDirectorySize: false)
                              .Where(b => string.Equals(b.SourceId, module.Id, StringComparison.OrdinalIgnoreCase)))
                 {
                     string? dll = FindModuleInjectDll(module, build.Directory);
@@ -1009,7 +1009,7 @@ public static class ModuleRegistry
         {
             return module.IsDirect
                 ? null
-                : new OptiScalerLibrary(module.Directory).List().FirstOrDefault()?.Version;
+                : new OptiScalerLibrary(module.Directory).List(includeDirectorySize: false).FirstOrDefault()?.Version;
         }
         catch
         {
@@ -1026,7 +1026,7 @@ public static class ModuleRegistry
         {
             return module.IsDirect
                 ? []
-                : [.. new OptiScalerLibrary(module.Directory).List().Select(b => b.Version)];
+                : [.. new OptiScalerLibrary(module.Directory).List(includeDirectorySize: false).Select(b => b.Version)];
         }
         catch
         {
@@ -1039,7 +1039,7 @@ public static class ModuleRegistry
     {
         try
         {
-            return new OptiScalerLibrary(module.Directory).List()
+            return new OptiScalerLibrary(module.Directory).List(includeDirectorySize: false)
                 .FirstOrDefault(b => string.Equals(b.Version, tag, StringComparison.OrdinalIgnoreCase))?.Directory;
         }
         catch

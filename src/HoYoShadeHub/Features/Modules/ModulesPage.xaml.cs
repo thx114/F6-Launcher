@@ -268,20 +268,26 @@ public sealed partial class ModulesPage : PageBase
         base.OnNavigatedTo(e);
         _gameId = e.Parameter as GameId;
 
-        if (_gameId is not null)
-        {
-            // 老配置「额外注入 DLL」搬进模块列表（一次性、按游戏）；OptiScaler 那边挪过来的 DLSS-NR 也接上
-            ModuleRegistry.MigrateLegacyExtraInjectDll(_gameId.GameBiz);
-            Features.OptiScaler.OptiScalerMigration.Run(_gameId);
-
-            // 远端模块目录（catalog/modules.json）的缓存，打开页面就能用
-            ModuleCatalogFile.Apply(Features.Plugins.RemoteCatalogService.ModulesCachePath);
-        }
-
+        _navigated = true;
         Load();
     }
 
-    private void Load()
+    protected override void OnNavigatedFrom(NavigationEventArgs e)
+    {
+        _navigated = false;
+        CancelModuleLoad();
+        base.OnNavigatedFrom(e);
+    }
+
+    protected override void OnUnloaded()
+    {
+        CancelModuleLoad();
+        base.OnUnloaded();
+    }
+
+    private void Load() => _ = LoadModulesAsync();
+
+    private void ApplyModuleRows(IReadOnlyList<ModuleRowData> rows)
     {
         _loading = true;
         try
@@ -295,31 +301,21 @@ public sealed partial class ModulesPage : PageBase
                 return;
             }
 
-            foreach (ModuleEntry entry in ModuleRegistry.List())
+            _resolvedEntries.Clear();
+            foreach (ModuleRowData row in rows)
             {
+                ModuleEntry entry = row.Entry;
                 // 还没装的模块不在这一页出现（用户要求）—— 要装就去「全局插件 → 模块」
                 if (string.IsNullOrWhiteSpace(entry.DllPath))
                 {
                     continue;
                 }
 
-                IReadOnlyList<string> versions = entry.Definition is { } definition
-                    ? ModuleRegistry.InstalledTags(definition)
-                    : [];
-
-                // 这个游戏选过的版本；选的版本已经被删了就退回最新那份
-                string? selected = entry.Definition is { } def
-                    ? AppConfig.GetModuleVersion(_gameId, def.Id)
-                    : null;
-
-                if (selected is null || !versions.Contains(selected, StringComparer.OrdinalIgnoreCase))
-                {
-                    selected = versions.FirstOrDefault();
-                }
-
-                // 注入时机（按模块，和「全局插件 → 模块」共用）；没单独设就跟随全局默认
-                int? injectDelay = AppConfig.GetModuleInjectDelaySeconds(entry.Key);
-                int globalDefault = AppConfig.GetDefaultInjectionDelaySeconds(_gameId.GameBiz);
+                IReadOnlyList<string> versions = row.Versions;
+                string? selected = row.SelectedVersion;
+                int? injectDelay = row.InjectDelay;
+                int globalDefault = row.GlobalDefault;
+                _resolvedEntries[entry.Key] = entry;
 
                 var moduleItem = new ModuleChoiceItem
                 {
@@ -330,7 +326,7 @@ public sealed partial class ModulesPage : PageBase
                     TagsText = entry.Tags is { Length: > 0 } ? string.Join(" · ", entry.Tags) : string.Empty,
                     Detail = $"注入：{entry.DllPath}",
                     CanUse = entry.GloballyEnabled,
-                    Used = entry.GloballyEnabled && ModuleRegistry.IsUsed(_gameId, entry.Key),
+                    Used = entry.GloballyEnabled && _usedKeys.Contains(entry.Key),
                     MissingText = entry.GloballyEnabled ? string.Empty : "在「全局插件 → 模块」里被全局关掉了。",
                     Versions = versions,
                     // 回调要在 SelectedVersion 之前挂好（初始赋值会触发它，Load 里用 _loading 挡住）
@@ -345,16 +341,8 @@ public sealed partial class ModulesPage : PageBase
                 };
 
                 // FSR 桥（genshin-fsr-bridge）卡片带扩展配置：桥 DLL 同目录的 Dx11FsrBridge.ini
-                string? bridgeDll = entry.Definition is { } bridgeDefinition
-                    ? ModuleRegistry.ResolveDllPath(bridgeDefinition, AppConfig.GetModuleVersion(_gameId, entry.Key))
-                    : entry.DllPath;
-                if (IsFsrBridgeModule(entry) && !string.IsNullOrWhiteSpace(bridgeDll)
-                    && Path.GetDirectoryName(bridgeDll) is { Length: > 0 } moduleDir)
-                {
-                    moduleItem.BridgeIniPath = Path.Combine(moduleDir, FsrBridgeOptions.IniFileName);
-                    EnsureBridgeItems(moduleItem);
-                    ReloadBridgeValues(moduleItem);
-                }
+                // 展开前不创建或读取桥配置，避免隐藏的控件拖慢整个模块页。
+                moduleItem.BridgeIniPath = row.BridgeIniPath;
 
                 _items.Add(moduleItem);
             }
@@ -444,6 +432,7 @@ public sealed partial class ModulesPage : PageBase
             return false;
         }
 
+        _moduleEditRevision++;
         TextBlock_Status.Text = $"已写入 Dx11FsrBridge.ini：{descriptor.Key} = {value}（下次启动游戏生效）。";
         return true;
     }
@@ -580,6 +569,9 @@ public sealed partial class ModulesPage : PageBase
             return;
         }
 
+        // 版本列表没有“空白”选项，重建 ItemsSource 回写的 null 不代表用户操作。
+        if (version is null && item.Versions.Count > 0) return;
+
         // 下拉是 TwoWay 绑定：刷新列表时重建卡片，ComboBox 的 ItemsSource 被换掉那一刻
         // SelectedItem 会瞬时变成 null 并写回来 —— 那不是用户的选择，但会把用户刚选的版本清掉。
         // 值没变就什么都不做（同样的自反馈也会在插件页那边造成刷新循环 + 原生崩溃）。
@@ -589,15 +581,12 @@ public sealed partial class ModulesPage : PageBase
             return;
         }
 
+        _moduleEditRevision++;
         AppConfig.SetModuleVersion(_gameId, item.Key, version);
         if (item.IsFsrBridge)
         {
-            ModuleEntry? entry = ModuleRegistry.List().FirstOrDefault(e => e.Key == item.Key);
-            string? dll = entry?.Definition is { } definition
-                ? ModuleRegistry.ResolveDllPath(definition, version)
-                : entry?.DllPath;
-            item.BridgeIniPath = dll is null ? null : Path.Combine(Path.GetDirectoryName(dll)!, FsrBridgeOptions.IniFileName);
-            ReloadBridgeValues(item);
+            _resolvedEntries.TryGetValue(item.Key, out ModuleEntry? entry);
+            _ = RefreshBridgeVersionAsync(item, entry, version);
         }
         TextBlock_Status.Text = string.IsNullOrWhiteSpace(version)
             ? $"「{item.Name}」改用默认版本（模块目录里最新装的那份）。"
@@ -612,6 +601,7 @@ public sealed partial class ModulesPage : PageBase
             return;
         }
 
+        _moduleEditRevision++;
         AppConfig.SetModuleInjectDelaySeconds(item.Key, seconds);
         TextBlock_Status.Text = seconds is null
             ? $"「{item.Name}」的注入时机：跟随全局默认。"
@@ -629,7 +619,11 @@ public sealed partial class ModulesPage : PageBase
             return;
         }
 
-        ModuleRegistry.SetUsed(_gameId, item.Key, item.Used);
+        // 使用加载时的一次性快照，不能让默认勾选在每次点击时重新递归扫描所有模块。
+        _moduleEditRevision++;
+        if (item.Used) _usedKeys.Add(item.Key);
+        else _usedKeys.Remove(item.Key);
+        AppConfig.SetUsedModuleKeys(_gameId, _usedKeys.ToList());
         TextBlock_Status.Text = item.Used
             ? $"这个游戏会用：{item.Name}"
             : $"这个游戏不用：{item.Name}";

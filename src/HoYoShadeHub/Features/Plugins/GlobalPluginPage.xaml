@@ -367,7 +367,7 @@
                                                                         Click="Button_LocalizeRow_Click"
                                                                         Style="{StaticResource CatalogRowButtonStyle}"
                                                                         ToolTipService.ToolTip="{x:Bind LocalizeButtonTooltip, Mode=OneWay}"
-                                                                        Visibility="{x:Bind CanLocalizeVisibility}">
+                                                                        Visibility="{x:Bind CanLocalizeVisibility, Mode=OneWay}">
                                                                     <TextBlock FontSize="12" Text="{x:Bind LocalizeButtonText, Mode=OneWay}" />
                                                                 </Button>
                                                                 <Button MinWidth="0"
@@ -1258,6 +1258,14 @@
 
         <!--  底部状态  -->
         <StackPanel Grid.Row="3" Spacing="4">
+            <!-- 目录补全独立于安装/下载状态，页面和已显示卡片保持可交互。 -->
+            <StackPanel x:Name="Panel_CatalogStatus" Orientation="Horizontal" Spacing="8" Visibility="Collapsed">
+                <ProgressRing x:Name="ProgressRing_Catalog" Width="14" Height="14" IsActive="False" />
+                <TextBlock VerticalAlignment="Center"
+                           Style="{ThemeResource CaptionTextBlockStyle}"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                           Text="正在后台补全目录，可继续操作…" />
+            </StackPanel>
             <ProgressBar x:Name="ProgressBar_Overall"
                          Height="3"
                          Maximum="100"
