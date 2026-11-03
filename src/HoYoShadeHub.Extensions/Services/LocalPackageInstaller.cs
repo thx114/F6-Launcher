@@ -626,7 +626,11 @@ public sealed class LocalPackageInstaller
             throw new InvalidOperationException("还没定位到 HoYoShade / OptiScaler 目录，没法覆盖安装。");
         }
 
-        string work = Path.Combine(TemporaryFolder.Path, "HoYoShadeHub.Local", Guid.NewGuid().ToString("N"));
+        // GamePack 中的 NR 必须硬链接进游戏缓存。系统 TEMP 可能在另一个卷，
+        // 因此覆盖包有缓存目标时直接在该目标卷解压，而不是放宽 NR 的复制限制。
+        string work = _cacheRoot.Length > 0
+            ? PackageTree.ResolveRelative(_cacheRoot, ".overlay-extract-" + Guid.NewGuid().ToString("N"))
+            : Path.Combine(TemporaryFolder.Path, "HoYoShadeHub.Local", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(work);
 
         try

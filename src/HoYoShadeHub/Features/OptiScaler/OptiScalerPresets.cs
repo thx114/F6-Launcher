@@ -342,7 +342,8 @@ internal static class OptiScalerPresets
                 return null;
             }
 
-            string source = OptiScalerProfiles.ProfilePath(buildDirectory, gameKey);
+            string source = OptiScalerProfiles.ProfilePath(
+                OptiScalerProfiles.AuthoritativeBuildDirectory(buildDirectory), gameKey);
             if (!File.Exists(source))
             {
                 return null;
@@ -435,6 +436,15 @@ internal static class OptiScalerPresets
     {
         var preparation = CollectForActivationChecked(buildDirectory);
         if (!preparation.Succeeded) return preparation;
+        // Launch never implicitly reapplies an old named preset over an existing game
+        // profile, including the direct official-DLL path with no NR/cache history.
+        // Explicit Apply remains the operation that selects/replaces a profile.
+        if (File.Exists(OptiScalerProfiles.ProfilePath(buildDirectory, gameKey)))
+        {
+            string selected = SelectedPreset(gameKey, buildDirectory);
+            return new(true, selected.Length == 0 ? null : selected,
+                RecoveryDirectory: preparation.RecoveryDirectory);
+        }
         return SyncIntoProfileChecked(buildDirectory, gameKey) with { RecoveryDirectory = preparation.RecoveryDirectory };
     }
 
@@ -505,6 +515,12 @@ internal static class OptiScalerPresets
         var collected = CollectFromRuntimeChecked(buildDirectory);
         if (!collected.Succeeded) return collected;
         string name = SelectedPreset(gameKey, buildDirectory);
+        // A per-game runtime is already projected from the persistent official profile.
+        // Named preset selection is applied by the editor to that profile; stale preset
+        // replay here must not overwrite a later direct edit of the official game INI.
+        if (!Path.GetFullPath(OptiScalerProfiles.AuthoritativeBuildDirectory(buildDirectory))
+            .Equals(Path.GetFullPath(buildDirectory), StringComparison.OrdinalIgnoreCase))
+            return new(true, name.Length == 0 ? null : name);
         if (name.Length == 0) return new(true, null);
         bool applied = Apply(buildDirectory, gameKey, name);
         return new(applied, name, applied ? null
@@ -519,6 +535,8 @@ internal static class OptiScalerPresets
     {
         try
         {
+            if (!string.IsNullOrWhiteSpace(buildDirectory))
+                buildDirectory = OptiScalerProfiles.AuthoritativeBuildDirectory(buildDirectory);
             string root = AppConfig.OptiScalerRootPath;
             if (string.IsNullOrWhiteSpace(root) || string.IsNullOrWhiteSpace(buildDirectory))
             {

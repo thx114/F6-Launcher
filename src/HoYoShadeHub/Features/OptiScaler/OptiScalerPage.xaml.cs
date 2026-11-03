@@ -115,7 +115,7 @@ public sealed partial class OptiScalerBuildItemViewModel : ObservableObject
 
     /// <summary>这个构建的目录（套配置要往它的 profiles\ 里写；没 dll 就没有）</summary>
     public string? BuildDirectory
-        => string.IsNullOrWhiteSpace(DllPath) ? null : Path.GetDirectoryName(DllPath);
+        => CurrentBuild?.DllPath is { Length: > 0 } source ? Path.GetDirectoryName(source) : null;
 
     /// <summary>卡片上显示的「当前文件」说明（profiles\<游戏>.ini 是否存在 / 何时改的）</summary>
     public string CurrentProfileText { get; set; } = string.Empty;

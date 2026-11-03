@@ -83,3 +83,13 @@ NR 测试包含真实用户 ZIP、全局可选过滤、多版本同时开放、�
 - 程序备份：`D:\APPS\test\TEST\HoYoShadeHub_Portable_1.4.5.0_x64_Full\_backup-nr-20261025-150459`。错误登记备份：同根 `_backup-nr-default-index-20261025-150506`，含清理 receipt。
 - 实现：`NrRuntimeLibrary.cs`、`DllVersionStore.cs`。一次性修复工具：`artifacts\NrDefaultProvenanceRepair`；部署脚本：`artifacts\Deploy-NrDefaultProvenanceTest-20261025.ps1`；过程记录：`artifacts\nr-default-provenance-deploy-20261025.log`；回归日志：`artifacts\nr-provenance-*-20261025.log`。
 - 按用户要求未启动或操作启动器，未启动游戏；构建、文件部署及库恢复校验不代表实际 UI 或游戏验证。
+
+## 2026-10-27 删除与卡片状态
+
+- 已下载以版本归档目录中 nvngx_dlssnr.dll 是否存在为准。页面取消调用 RecoverContentVersions，避免手动删除后又从内容缓存恢复。
+- 页面加载时启动 2 秒 DispatcherTimer，对比版本文件存在状态；发生变化才重建卡片，卸载页面停止计时。空的自定义版本目录不再产生卡片；远端版本缺文件则回到可下载分组。
+- 卡片检查更新按钮替换为红色 ×（28 DIP 按钮、14 DIP E711 图标），直接删除指定 NR 版本归档并撤销其恢复记账，失败明确提示；顶部检查更新保留。
+- 删除不移除内容寻址库、游戏正在使用的硬链接或构建默认库，不重写游戏 NR 选择。
+- nr-archive-download-tests 24 项通过，覆盖删除后不恢复、默认版本不产生用户卡片和硬链接保留。
+- Release 构建 308 警告、0 错误。test 部署校验 980 文件，替换 23 文件，备份 _backup-nr-20261027-110736；主 DLL SHA256 827B0D0612DD48AC6F7583652CCFEED8DF8AB1AC58D5880FBF8B9D735E881257。
+- 按用户要求未启动启动器或游戏测试，界面交互效果待用户验证。

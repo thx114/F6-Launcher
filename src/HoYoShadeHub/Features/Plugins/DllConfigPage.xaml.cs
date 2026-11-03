@@ -46,6 +46,8 @@ public sealed partial class DllConfigPage : PageBase
     private DllCatalog? _catalog;
     private bool _isWorking;
     private bool _buildingCards;
+    private DispatcherTimer? _nrStateTimer;
+    private string _nrDiskState = string.Empty;
     private readonly HashSet<string> _nrUpdates = new(StringComparer.OrdinalIgnoreCase);
 
     public DllConfigPage()
@@ -70,11 +72,17 @@ public sealed partial class DllConfigPage : PageBase
         // 国内基本连不上，报出来就是一句 SSL connection could not be established。
         PluginDownloadProxy.Apply();
 
+        _nrStateTimer ??= new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+        _nrStateTimer.Tick -= RefreshNrDiskState;
+        _nrStateTimer.Tick += RefreshNrDiskState;
+        _nrStateTimer.Start();
+
         _ = RefreshAsync();
     }
 
     protected override void OnUnloaded()
     {
+        _nrStateTimer?.Stop();
         Installed.Clear();
         Families.Clear();
         OtherInstalled.Clear();
@@ -112,8 +120,7 @@ public sealed partial class DllConfigPage : PageBase
 
             TextBlock_TargetPath.Text = _host.AddonsPath;
             // 本地版本先显示，云端刷新失败或耗时不应让已下载内容消失。
-            var recoveryErrors = await Task.Run(() => NrRuntimeLibrary.RecoverContentVersions(AppConfig.CacheRoot));
-            foreach (string recoveryError in recoveryErrors) _logger.LogWarning("NR version recovery: {Error}", recoveryError);
+            // 文件系统是已下载状态的依据；刷新不能把用户手动删除的文件恢复出来。
             BuildNrCards();
             await RemoteCatalogService.RefreshIfDueAsync();
             await LoadInstalledAsync();
@@ -243,7 +250,8 @@ public sealed partial class DllConfigPage : PageBase
             var store = new DllVersionStore(AppConfig.CacheRoot);
             var components = _catalog?.Of("dlssnr") ?? [];
             var versions = DllFingerprintCatalog.Fingerprints.Where(f => f.Family.Equals("dlssnr", StringComparison.OrdinalIgnoreCase)).Select(f => f.Version)
-                .Concat(components.Select(c => c.Version)).Concat(store.ListVersions("dlssnr").Select(v => v.Version))
+                .Concat(components.Select(c => c.Version)).Concat(store.ListVersions("dlssnr")
+                    .Where(v => store.FilePath("dlssnr", v.Version, NrRuntimeLibrary.FileName).Length > 0).Select(v => v.Version))
                 .Distinct(StringComparer.OrdinalIgnoreCase);
             bool downloadHeadingShown = false;
             foreach (string version in versions.OrderByDescending(v => store.FilePath("dlssnr", v, NrRuntimeLibrary.FileName).Length > 0))
@@ -256,6 +264,20 @@ public sealed partial class DllConfigPage : PageBase
             }
         }
         finally { _buildingCards = false; }
+        _nrDiskState = ReadNrDiskState();
+    }
+
+    private static string ReadNrDiskState()
+    {
+        var store = new DllVersionStore(AppConfig.CacheRoot);
+        return string.Join("\n", store.ListVersions("dlssnr")
+            .Where(v => store.FilePath("dlssnr", v.Version, NrRuntimeLibrary.FileName).Length > 0)
+            .Select(v => v.Version).OrderBy(v => v, StringComparer.OrdinalIgnoreCase));
+    }
+
+    private void RefreshNrDiskState(object? sender, object e)
+    {
+        if (!_isWorking && !_buildingCards && ReadNrDiskState() != _nrDiskState) BuildNrCards();
     }
 
     /// <summary>DLSS5 那两样齐了没</summary>
@@ -372,8 +394,27 @@ public sealed partial class DllConfigPage : PageBase
         finally { BuildNrCards(); _isWorking = false; ProgressBar_Overall.Visibility = Visibility.Collapsed; }
     }
 
-    private async void Button_CheckNrUpdate_Click(object sender, RoutedEventArgs e)
-        => await CheckNrUpdatesAsync((sender as FrameworkElement)?.DataContext is NrVersionCardViewModel row ? row.Version : null);
+    private void Button_DeleteNr_Click(object sender, RoutedEventArgs e)
+    {
+        if (_isWorking || sender is not FrameworkElement { DataContext: NrVersionCardViewModel row }) return;
+        _isWorking = true;
+        try
+        {
+            var store = new DllVersionStore(AppConfig.CacheRoot);
+            bool existed = store.Has("dlssnr", row.Version);
+            if (existed && !store.DeleteVersion("dlssnr", row.Version))
+                throw new IOException("NR 版本删除失败，请检查文件占用和目录权限。");
+            _nrUpdates.Remove(row.Version);
+            BuildNrCards();
+            ShowInfo("NR 版本已删除", row.Version + "；游戏当前使用的硬链接与默认运行库保留。", InfoBarSeverity.Success);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Delete NR version {Version}", row.Version);
+            ShowInfo("NR 删除失败", ex.Message, InfoBarSeverity.Error);
+        }
+        finally { _isWorking = false; }
+    }
 
     private async Task CheckNrUpdatesAsync(string? version = null)
     {

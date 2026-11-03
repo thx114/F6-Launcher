@@ -162,6 +162,8 @@ public static partial class OptiScalerProfiles
 
         try
         {
+            if (ReadAuthority(buildDirectory) is { } authority)
+                return CollectAuthoritative(buildDirectory, authority);
             string baseline = Path.Combine(buildDirectory, RuntimeBaselineFileName);
             byte[] main = File.ReadAllBytes(mainIni);
             byte[] saved = File.ReadAllBytes(profile);

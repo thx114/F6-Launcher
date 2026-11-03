@@ -24,6 +24,8 @@ public static partial class OptiScalerProfiles
                 if (collection.Succeeded) return new(true);
                 if (collection.Status != CollectionStatus.Blocked)
                     return new(false, FailureReason: "Configuration files could not be read or saved.");
+                if (File.Exists(Path.Combine(buildDirectory, AuthorityFile)))
+                    return new(false, FailureReason: "Authoritative profile projection is blocked; preserve official and runtime files.");
 
                 string mainPath = Path.Combine(buildDirectory, OptiScalerRuntime.ConfigFileName);
                 string baselinePath = Path.Combine(buildDirectory, RuntimeBaselineFileName);

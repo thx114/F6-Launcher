@@ -10,6 +10,7 @@ using HoYoShadeHub.Features.GameLauncher;
 using HoYoShadeHub.Features.GameSetting;
 using HoYoShadeHub.Features.GameSelector;
 using HoYoShadeHub.Features.OptiScaler;
+using HoYoShadeHub.Features.Screenshot;
 using HoYoShadeHub.Features.Xxmi;
 using Microsoft.Extensions.Logging;
 using Microsoft.UI.Xaml;
@@ -54,6 +55,14 @@ public sealed class LauncherActionContext
     /// <summary>true = 用户点了按钮（可以弹窗）；false = 启动前自动跑（UI 弹窗类动作跳过）</summary>
     public bool Interactive { get; init; }
 
+    /// <summary>Only Program.RunStepsJson sets this after validating a one-step click CLI batch.</summary>
+    public bool IsValidatedClickCli { get; init; }
+
+    /// <summary>Only Program.RunStepsJson sets this after validating a one-step capture CLI batch.</summary>
+    public bool IsValidatedCaptureCli { get; init; }
+
+    public bool IsValidatedActivationCli { get; init; }
+
     /// <summary>进度汇报（写状态栏 / 日志）</summary>
     public Action<string>? Report { get; init; }
 
@@ -66,7 +75,7 @@ public sealed class LauncherActionContext
 /// pending、未知身份、失败/partial 或上下文失效立即返回结构化 blocked，停止动作与外层批次。
 /// 所有接口名大小写不敏感；手动内置开关仍是独立可重复操作。
 /// </summary>
-public static class LauncherActionRunner
+public static partial class LauncherActionRunner
 {
     private static readonly ILogger _logger = AppConfig.GetLogger<GamePluginPage>();
 
@@ -140,6 +149,7 @@ public static class LauncherActionRunner
             // ===== OptiScaler / 模块 / XXMI =====
             "set_opt" or "set_optiscaler" => SetOptiScaler(step, context),
             "set_opt_build" or "set_optiscaler_build" or "select_opt_build" => SetOptiScalerBuild(step, context),
+            "set_opt_nr" or "set_optiscaler_nr" => await SetOptNrAsync(step, context),
             "set_module" => SetModule(step, context),
             "import_opt_config" => ImportOptConfig(step, context),
             "update_opt_config" => UpdateOptConfig(step, context),
@@ -164,6 +174,8 @@ public static class LauncherActionRunner
             "stop_game" or "close_game" or "kill_game" or "stopgame" => await StopGameAsync(context),
             "wait" or "sleep" or "delay" => await WaitAsync(step),
             "click_game" or "click_window" => await ClickGameAsync(step, context),
+            "capture_game" => await CaptureGameAsync(step, context),
+            "activate_game" => await ActivateGameAsync(step, context),
             "press_key" or "send_key" => await PressGameKeyAsync(step, context),
             "test_game" or "launch_wait_stop" or "self_test" => await TestGameAsync(step, context),
             "test_map" or "map_test" => await TestMapAsync(step, context),
@@ -330,45 +342,71 @@ public static class LauncherActionRunner
     }
 
     /// <summary>
-    /// click_game：把游戏窗口激活后点击客户区。x/y 默认是归一化坐标，便于不同分辨率的登录按钮自动化。
-    /// 传入 x/y 大于 1 时按客户区像素解释。
+    /// activate_game：仅显式精确身份 CLI，请求 Windows 前台激活；不发送输入。
     /// </summary>
+    private static async Task<string> ActivateGameAsync(PackActionStep step, LauncherActionContext context)
+    {
+        if (!context.IsValidatedActivationCli || !AppConfig.IsAdmin || context.PackRoot is not null
+            || context.GameBiz is not { } biz || biz.Value != GameBiz.hk4e_cn
+            || !string.Equals(step.Action, "activate_game", StringComparison.OrdinalIgnoreCase))
+            return "✗ activate_game 只允许已提权的 hk4e_cn 单步 CLI 调用";
+        try
+        {
+            var request = ExactGameActivationRequest.Parse(step.Raw);
+            GameEntry? entry = GameCatalog.GetOrCreate(GameCatalog.CreateService(), context.GameId);
+            string result = await ExactGameActivation.ExecuteAsync(request, entry?.ExePath ?? string.Empty);
+            _logger.LogInformation("{Result}", result);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "activate_game rejected or denied by Windows");
+            return "✗ activate_game 被拒绝：" + ex.Message;
+        }
+    }
+
+    private static async Task<string> CaptureGameAsync(PackActionStep step, LauncherActionContext context)
+    {
+        if (!context.IsValidatedCaptureCli || context.PackRoot is not null
+            || context.GameBiz is not { } biz || biz.Value != GameBiz.hk4e_cn
+            || !string.Equals(step.Action, "capture_game", StringComparison.OrdinalIgnoreCase))
+            return "✗ capture_game 只允许 hk4e_cn 单步 CLI 调用";
+        try
+        {
+            ExactGameCaptureRequest request = ExactGameCaptureRequest.Parse(step.Raw);
+            GameEntry? entry = GameCatalog.GetOrCreate(GameCatalog.CreateService(), context.GameId);
+            var result = await ExactGameCapture.ExecuteAsync(request, entry?.ExePath ?? string.Empty,
+                Path.Combine(AppConfig.LogFolder, "cli-captures"), ExactGameFrameCapture.CapturePngAsync);
+            _logger.LogInformation("capture_game pid={Pid} filetime={FileTime} path={Path} size={Width}x{Height} sha256={Sha256}",
+                request.Pid, request.CreationFileTime, result.Path, result.Width, result.Height, result.Sha256);
+            return $"capture_game: pid={request.Pid} filetime={request.CreationFileTime} png={result.Path} size={result.Width}x{result.Height} sha256={result.Sha256}";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "capture_game rejected or failed");
+            return "✗ capture_game 被拒绝：" + ex.Message;
+        }
+    }
+
     private static async Task<string> ClickGameAsync(PackActionStep step, LauncherActionContext context)
     {
-        GameId? gameId = ResolveGameId(context);
-        if (gameId is null)
-            return "✗ click_game 需要先指定游戏（--biz xxx）";
-
-        Process? process = await AppConfig.GetService<GameLauncherService>().GetGameProcessAsync(gameId);
-        if (process is null || process.HasExited || process.MainWindowHandle == nint.Zero)
-            return "✗ 游戏窗口不存在";
-
-        process.Refresh();
-        nint hwnd = process.MainWindowHandle;
-        var activation = await ActivateGameWindowAsync(hwnd);
-        if (!activation.Ok)
-            return "✗ " + activation.Error;
-        if (!GetClientRect(hwnd, out NativeRect rect) || rect.Right <= rect.Left || rect.Bottom <= rect.Top)
-            return "✗ 无法读取游戏客户区";
-
-        double xValue = step.GetNumber("x") ?? 0.5;
-        double yValue = step.GetNumber("y") ?? 0.92;
-        int clientX = xValue > 1.0 ? (int)Math.Round(xValue) : (int)Math.Round((rect.Right - rect.Left) * xValue);
-        int clientY = yValue > 1.0 ? (int)Math.Round(yValue) : (int)Math.Round((rect.Bottom - rect.Top) * yValue);
-        clientX = Math.Clamp(clientX, 0, rect.Right - rect.Left - 1);
-        clientY = Math.Clamp(clientY, 0, rect.Bottom - rect.Top - 1);
-        var point = new NativePoint { X = clientX, Y = clientY };
-        if (!ClientToScreen(hwnd, ref point))
-            return "✗ 无法转换游戏坐标";
-
-        SetCursorPos(point.X, point.Y);
-        bool down = SendMouseButton(MouseLeftDown);
-        await Task.Delay(60);
-        bool up = SendMouseButton(MouseLeftUp);
-        await Task.Delay(250);
-        if (!down || !up)
-            return $"✗ 鼠标注入失败 win32={Marshal.GetLastWin32Error()}";
-        return $"已点击游戏窗口（{clientX},{clientY}）";
+        if (!context.IsValidatedClickCli || !AppConfig.IsAdmin || context.PackRoot is not null
+            || context.GameBiz is not { } biz || biz.Value != GameBiz.hk4e_cn
+            || !string.Equals(step.Action, "click_game", StringComparison.OrdinalIgnoreCase))
+            return "✗ click_game 只允许已提权的 hk4e_cn 单步 CLI 调用";
+        try
+        {
+            ExactGameClickRequest request = ExactGameClickRequest.Parse(step.Raw);
+            GameEntry? entry = GameCatalog.GetOrCreate(GameCatalog.CreateService(), context.GameId);
+            string result = ExactGameClick.Execute(request, entry?.ExePath ?? string.Empty);
+            _logger.LogInformation("{Result}", result);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "click_game rejected: pid/creation/window/coordinate validation failed");
+            return "✗ click_game 被拒绝：" + ex.Message;
+        }
     }
 
 
@@ -1090,7 +1128,12 @@ public static class LauncherActionRunner
             return "✗ 这个游戏还没选 OptiScaler 构建（先跑 set_opt_build）";
         }
 
-        string? dll = AppConfig.GetSelectedOptiScalerDll(gameId);
+        bool ifMissing = step.GetBool("if_missing") == true;
+        // 初始化检查必须落在 per-game 所选的原始构建，不能误认隔离 runtime 的 profile。
+        string? dll = ifMissing
+            ? new OptiScalerLibrary(AppConfig.OptiScalerRootPath).List(includeDirectorySize: false)
+                .Find(b => string.Equals(b.Id, buildId, StringComparison.OrdinalIgnoreCase))?.DllPath
+            : AppConfig.GetSelectedOptiScalerDll(gameId);
         string? buildDir = dll is null ? null : Path.GetDirectoryName(Path.GetFullPath(dll));
         if (string.IsNullOrWhiteSpace(buildDir) || !Directory.Exists(buildDir))
         {
@@ -1098,6 +1141,39 @@ public static class LauncherActionRunner
         }
 
         string gameKey = gameId.GameBiz.ToString();
+        if (ifMissing)
+        {
+            if (File.Exists(OptiScalerProfiles.ProfilePath(buildDir, gameKey)))
+                return "已跳过 OptiScaler 配置：游戏 profile 已存在（if_missing）";
+
+            // 覆盖包不携带 root main/profile；仅首次安装缺少 main 时引导既有 Apply。
+            string mainIni = Path.Combine(buildDir, OptiScalerRuntime.ConfigFileName);
+            try
+            {
+                if (!File.Exists(mainIni))
+                {
+                    string? content = OptiScalerPresets.Read(name!);
+                    if (content is null) return "✗ 初始化配置失败：找不到预设 " + name;
+                    try
+                    {
+                        using var output = new FileStream(mainIni, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+                        using var writer = new StreamWriter(output, new UTF8Encoding(false));
+                        writer.Write(content);
+                    }
+                    catch (IOException ex) when (((ex.HResult & 0xFFFF) is 80 or 183) && File.Exists(mainIni))
+                    {
+                        // 另一个初始化者已创建 main；不覆盖，交给 Apply 的既有激活流程。
+                    }
+                }
+            }
+            catch (Exception ex) { return "✗ 初始化 OptiScaler main 配置失败：" + ex.Message; }
+
+            if (!OptiScalerPresets.Apply(buildDir, gameKey, name!))
+                return $"✗ 套用配置失败（presets 目录里没有 {name}.ini？）";
+            AppConfig.SetValue(name, $"opti_preset_{gameKey}_{buildId}");
+            AppConfig.SetValue(name, OptiScalerPresets.FollowKey(gameKey));
+            return $"OptiScaler 配置 → {name}（已首次写入 profiles 并激活）";
+        }
         // 与 OptiScalerPage.PresetKey 同规则：opti_preset_<游戏>_<构建id>
         AppConfig.SetValue(name, $"opti_preset_{gameKey}_{buildId}");
         AppConfig.SetValue(name, OptiScalerPresets.FollowKey(gameKey));

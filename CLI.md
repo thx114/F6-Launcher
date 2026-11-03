@@ -63,6 +63,7 @@ JSON 三种形态等价：`{"steps":[...]}` / `{"actions":[...]}` / 裸数组 `[
 | `set_opt` / `set_module` / `set_addon` | OptiScaler / 模块 / 插件开关 |
 | `import_preset` / `apply_preset` | 预设导入 / 应用 |
 | `switch_dll` | DLL 版本切换 |
+| `set_opt_nr` / `set_optiscaler_nr` | 当前游戏的 OptiScaler 独立 NR；`version` 指定名称，`default:true` 恢复构建默认；`file` + `sha256` 校验并导入包内 x64 DLL，`download:false` 禁止缺失版本下载 |
 | `set_inject_mode` / `set_inject_delay` / `set_cmd_launch` / `set_cmd_args` / `set_game_setting` | 其余启动设置 |
 
 ## 其它动词

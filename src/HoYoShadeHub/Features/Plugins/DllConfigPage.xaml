@@ -147,8 +147,8 @@
                                                 <Button Width="28" Height="28" MinWidth="0" MinHeight="0" Padding="4" Background="Transparent" BorderThickness="0" VerticalAlignment="Center" Click="Button_DownloadNr_Click" ToolTipService.ToolTip="{x:Bind DownloadText}" AutomationProperties.Name="{x:Bind DownloadText}" Visibility="{x:Bind DownloadVisibility}">
                                                     <FontIcon Glyph="&#xE896;" FontSize="14" />
                                                 </Button>
-                                                <Button Width="28" Height="28" MinWidth="0" MinHeight="0" Padding="4" Background="Transparent" BorderThickness="0" VerticalAlignment="Center" Click="Button_CheckNrUpdate_Click" ToolTipService.ToolTip="检查更新" AutomationProperties.Name="检查更新" Visibility="{x:Bind InstalledActionsVisibility}">
-                                                    <FontIcon Glyph="&#xE72C;" FontSize="14" />
+                                                <Button Width="28" Height="28" MinWidth="0" MinHeight="0" Padding="4" Background="Transparent" BorderThickness="0" VerticalAlignment="Center" Click="Button_DeleteNr_Click" ToolTipService.ToolTip="删除此 NR 版本" AutomationProperties.Name="删除此 NR 版本" Visibility="{x:Bind InstalledActionsVisibility}">
+                                                    <FontIcon Glyph="&#xE711;" FontSize="14" Foreground="#FFFF5252" />
                                                 </Button>
                                                 <Button Width="28" Height="28" MinWidth="0" MinHeight="0" Padding="4" Background="Transparent" BorderThickness="0" VerticalAlignment="Center" Click="Button_OpenNr_Click" ToolTipService.ToolTip="打开目录" AutomationProperties.Name="打开目录" IsEnabled="{x:Bind IsInstalled}" Visibility="{x:Bind InstalledActionsVisibility}">
                                                     <FontIcon Glyph="&#xE8B7;" FontSize="14" />

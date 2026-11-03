@@ -3178,7 +3178,9 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
         }));
         try
         {
+            _logger.LogInformation("Local package installation starting: {Path}", file);
             LocalPackageInstallResult result = await installer.InstallAsync(file, progress: progress);
+            _logger.LogInformation("Local package files installed: {Path}; kind={Kind}; target={Target}", file, result.Kind, result.TargetPath);
             acceptingProgress = false;
             ProgressBar_Overall.IsIndeterminate = false;
             ProgressBar_Overall.Value = 92;
@@ -3613,8 +3615,12 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
 
         string file = paths[0];
 
+        _logger.LogInformation("Plugin drop received: {Path}; busy={Busy}", file, _isWorking);
+        if (RejectInvalidDrop(file)) return;
+
         if (_isWorking)
         {
+            _logger.LogWarning("Plugin drop deferred: page busy; path={Path}", file);
             ShowInfo("正忙", "当前有操作在进行，等它结束再拖一次。", InfoBarSeverity.Warning);
             return;
         }
@@ -3631,14 +3637,10 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
 
     private async Task InstallDroppedFileAsync(string? file)
     {
+        if (RejectInvalidDrop(file)) return;
         await RunAsync(async () =>
         {
-            if (string.IsNullOrWhiteSpace(file) || !File.Exists(file))
-            {
-                return;
-            }
-
-            ExtensionManifest? manifest = ReadManifestFromPackage(file);
+            ExtensionManifest? manifest = ReadManifestFromPackage(file!);
             if (manifest is not null)
             {
                 manifest.Source = new ExtensionSource { Type = ExtensionSourceType.Local, Url = file };
@@ -3648,8 +3650,19 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
 
             LocalPackageInstaller installer = CreateLocalPackageInstaller();
 
-            await InstallLocalFileWithProgressAsync(installer, file);
+            await InstallLocalFileWithProgressAsync(installer, file!);
         });
+    }
+
+    private bool RejectInvalidDrop(string? file)
+    {
+        string? error = LocalPackageDropInput.GetValidationError(file);
+        if (error is null) return false;
+        _logger.LogWarning("Plugin drop rejected: path={Path}; reason={Reason}", file, error);
+        TextBlock_Status.Text = error;
+        ShowInfo("拖入文件未安装", error, InfoBarSeverity.Warning);
+        InAppToast.MainWindow?.Information("拖入文件未安装", error, 10000);
+        return true;
     }
 
     #endregion

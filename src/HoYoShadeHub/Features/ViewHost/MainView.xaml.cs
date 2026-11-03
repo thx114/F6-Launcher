@@ -372,33 +372,71 @@ public sealed partial class MainView : UserControl, IShellFileDropTarget
 
     public async Task OnShellFilesDroppedAsync(IReadOnlyList<string> paths, Windows.Foundation.Point? screenPoint)
     {
-        if (_installingDroppedOverlay) return;
-        var originalPageTarget = ShellFileDrop.GetPageTarget(_shellDropWindow);
-        var overlays = await Task.Run(() => paths.Where(p => File.Exists(p)
-            && LocalPackageInstaller.DetectKind(p) == LocalPackageKind.Overlay).ToArray());
-        if (overlays.Length == 0)
+        if (_installingDroppedOverlay)
         {
-            if (originalPageTarget is { } target && ReferenceEquals(target, ShellFileDrop.GetPageTarget(_shellDropWindow)))
-                await target.OnShellFilesDroppedAsync(paths, screenPoint);
+            ReportDropProblem("正在处理上一批拖入文件，请完成后再拖一次。");
             return;
         }
         _installingDroppedOverlay = true;
         try
         {
+            var originalPageTarget = ShellFileDrop.GetPageTarget(_shellDropWindow);
+            var inputs = await Task.Run(() => paths.Select(LocalPackageDropInput.Inspect).ToArray());
+            foreach (var input in inputs)
+                _logger.LogInformation("Drop inspection: path={Path}, file={File}, directory={Directory}, extension={Extension}, kind={Kind}, error={Error}",
+                    input.Path, File.Exists(input.Path), Directory.Exists(input.Path), Path.GetExtension(input.Path), input.Kind, input.Error);
+            var overlays = inputs.Where(p => p.Kind == LocalPackageKind.Overlay).ToArray();
+            if (overlays.Length == 0)
+            {
+                if (originalPageTarget is { } target && ReferenceEquals(target, ShellFileDrop.GetPageTarget(_shellDropWindow)))
+                {
+                    _logger.LogInformation("Drop forwarded to page {Target}", target.GetType().Name);
+                    await target.OnShellFilesDroppedAsync(paths, screenPoint);
+                }
+                else ReportDropProblem(inputs.FirstOrDefault()?.Error ?? "当前页面不接收这类文件。覆盖包请拖入原始 ZIP，其他插件请到对应页面安装。");
+                return;
+            }
+            foreach (var input in inputs.Where(p => p.Error is not null))
+                ReportDropProblem($"{Path.GetFileName(input.Path)}：{input.Error}");
+            InAppToast.MainWindow?.Information("收到覆盖包", "正在打开插件页并等待加载完成…", 5000);
             ExecuteNavigation(typeof(GlobalPluginPage), null, new SuppressNavigationTransitionInfo());
-            if (MainView_Frame.Content is not GlobalPluginPage page) return;
+            if (MainView_Frame.Content is not GlobalPluginPage page)
+            {
+                ReportDropProblem("无法打开插件页，未开始安装。请到全局插件页使用本地安装。");
+                return;
+            }
             for (int i = 0; !page.IsReadyForShellDrop && i < 300; i++)
             {
                 await Task.Delay(100);
-                if (!ReferenceEquals(MainView_Frame.Content, page)) return;
+                if (!ReferenceEquals(MainView_Frame.Content, page))
+                {
+                    ReportDropProblem("页面已切换，覆盖包尚未安装。请重新拖入。");
+                    return;
+                }
             }
-            foreach (string overlay in overlays)
+            foreach (var overlay in overlays)
             {
-                if (!ReferenceEquals(MainView_Frame.Content, page) || !page.IsReadyForShellDrop) return;
-                await page.OnShellFilesDroppedAsync([overlay]);
+                if (!ReferenceEquals(MainView_Frame.Content, page) || !page.IsReadyForShellDrop)
+                {
+                    ReportDropProblem("插件页仍在加载或正在执行操作，未开始安装此覆盖包。请稍后重试。");
+                    return;
+                }
+                _logger.LogInformation("Drop overlay dispatch: {Path}", overlay.Path);
+                await page.OnShellFilesDroppedAsync([overlay.Path]);
             }
         }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Drop routing failed");
+            ReportDropProblem("处理拖入文件失败：" + ex.Message);
+        }
         finally { _installingDroppedOverlay = false; }
+    }
+
+    private void ReportDropProblem(string message)
+    {
+        _logger.LogWarning("Drop not installed: {Reason}", message);
+        InAppToast.MainWindow?.Information("拖入文件未安装", message, 10000);
     }
 
     private void NavigateTo(Type? page, object? param = null, NavigationTransitionInfo? infoOverride = null)

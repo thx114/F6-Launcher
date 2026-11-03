@@ -8,6 +8,7 @@ using HoYoShadeHub.Extensions.Models;
 using HoYoShadeHub.Extensions.ReShade;
 using HoYoShadeHub.Features.GameLauncher;
 using HoYoShadeHub.Features.Plugins;
+using HoYoShadeHub.Features.Screenshot;
 using HoYoShadeHub.Features.UrlProtocol;
 using HoYoShadeHub.RPC;
 using System;
@@ -172,6 +173,24 @@ public static class Program
 
             if (args[0].ToLower() is "stopgame" or "killgame")
             {
+                try
+                {
+                    var expected = ExactStopCondition.Parse(args);
+                    if (expected is not null)
+                    {
+                        GameId? exactGame = GameId.FromGameBiz((GameBiz)config.GetValue<string>("biz"));
+                        if (exactGame is null) throw new ArgumentException("精确停止需要 --biz <游戏代码>。");
+                        if (!AppConfig.IsAdmin) return RelaunchElevatedWithRelay(args);
+                        var entry = GameCatalog.GetOrCreate(GameCatalog.CreateService(), exactGame);
+                        CliPrint(ExactProcessStop.StopAsync(expected, entry?.ExePath ?? string.Empty).GetAwaiter().GetResult());
+                        return 0;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    CliPrint("精确停止被拒绝：" + ex.Message, error: true);
+                    return 1;
+                }
                 // 结束游戏：就是跑一个 stop_game 步骤
                 return RunStepsJson(config.GetValue<string>("biz"), """{"steps":[{"action":"stop_game"}]}""", args);
             }
@@ -214,6 +233,25 @@ public static class Program
             }
             catch { }
             return 0;
+        }
+
+        // 只在主 GUI 实例启动时清理旧动作；第二实例、CLI、覆盖包导入均不调用。
+        // 在窗口创建前完成，运行期间新安装的覆盖包不会再被这次清理删除。
+        try
+        {
+            string userRoot = AppConfig.UserDataFolder ?? string.Empty;
+            string cacheRoot = AppConfig.CacheRoot;
+            int deleted = PackAutoStartupCleanup.DeleteExisting(
+                string.IsNullOrWhiteSpace(cacheRoot) ? null : Path.Combine(cacheRoot, "games"),
+                userRoot.Length == 0 ? null : Path.Combine(userRoot, "GamePack"),
+                userRoot.Length == 0 ? null : Path.Combine(userRoot, ".hysx", "cache", "games"));
+            AppConfig.GetLogger<App>().LogInformation("Startup auto.json cleanup: {Count} files deleted", deleted);
+        }
+        catch (Exception ex)
+        {
+            AppConfig.GetLogger<App>().LogError(ex, "Startup auto.json cleanup failed; startup stopped");
+            Console.Error.WriteLine("旧版 auto.json 清理失败，请关闭占用程序并检查目录权限后重试：" + ex.Message);
+            return 1;
         }
 
         global::WinRT.ComWrappersSupport.InitializeComWrappers();
@@ -345,13 +383,50 @@ public static class Program
             return 1;
         }
 
+        bool hasActivation = actions.Any(a => a.Steps.Any(s => s.Action.Equals("activate_game", StringComparison.OrdinalIgnoreCase)));
+        if (hasActivation)
+        {
+            try { _ = ExactGameActivationRequest.ValidateCliBatch(bizText, actions); }
+            catch (Exception ex)
+            {
+                Serilog.Log.Warning(ex, "activate_game CLI preflight rejected");
+                CliPrint("activate_game 参数拒绝：" + ex.Message, error: true);
+                return 1;
+            }
+        }
+        bool hasCapture = actions.Any(a => a.Steps.Any(s => s.Action.Equals("capture_game", StringComparison.OrdinalIgnoreCase)));
+        if (hasCapture)
+        {
+            try { _ = ExactGameCaptureRequest.ValidateCliBatch(bizText, actions); }
+            catch (Exception ex)
+            {
+                Serilog.Log.Warning(ex, "capture_game CLI preflight rejected");
+                CliPrint("capture_game 参数拒绝：" + ex.Message, error: true);
+                return 1;
+            }
+        }
+        bool hasClick = actions.Any(a => a.Steps.Any(s => s.Action.Equals("click_game", StringComparison.OrdinalIgnoreCase)
+            || s.Action.Equals("click_window", StringComparison.OrdinalIgnoreCase)));
+        if (hasClick)
+        {
+            try { _ = ExactGameClickRequest.ValidateCliBatch(bizText, actions); }
+            catch (Exception ex)
+            {
+                Serilog.Log.Warning(ex, "click_game CLI preflight rejected");
+                CliPrint("click_game 参数拒绝：" + ex.Message, error: true);
+                return 1;
+            }
+        }
+
         // 要碰游戏进程的步骤（启动/结束）必须提权跑：HoYoShade 注入器需要管理员才能把
         // ReShade 注进游戏（GUI 启动器本来就是提权的，CLI 从普通控制台跑不是 —— 注不进去，
         // 游戏起来没插件，2026-10-01 实测）。提权副本的输出经接力文件回流到本控制台。
         if (!AppConfig.IsAdmin && originalArgs is not null && actions.Any(a => a.Steps.Any(s =>
                 s.Action is "launch_game" or "launch" or "start_game"
                     or "stop_game" or "close_game" or "kill_game" or "stopgame"
-                    or "test_game" or "launch_wait_stop" or "self_test")))
+                    or "test_game" or "launch_wait_stop" or "self_test"
+                || s.Action.Equals("click_game", StringComparison.OrdinalIgnoreCase)
+                || s.Action.Equals("activate_game", StringComparison.OrdinalIgnoreCase))))
         {
             return RelaunchElevatedWithRelay(originalArgs);
         }
@@ -397,6 +472,9 @@ public static class Program
             PackRoot = null,
             XamlRoot = null,
             Interactive = false,
+            IsValidatedClickCli = hasClick,
+            IsValidatedCaptureCli = hasCapture,
+            IsValidatedActivationCli = hasActivation,
             Report = line => CliPrint("  " + line),
         };
 

@@ -13,6 +13,30 @@ using System.IO.Compression;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
+if (args.Length == 1 && args[0] == "exact-stop-tests")
+    return await HoYoShadeHub.Extensions.Tests.ExactProcessStopTests.RunAsync();
+
+if (args.Length == 1 && args[0] == "exact-click-tests")
+    return HoYoShadeHub.Extensions.Tests.ExactGameClickTests.Run();
+
+if (args.Length == 1 && args[0] == "exact-capture-tests")
+    return await HoYoShadeHub.Extensions.Tests.ExactGameCaptureTests.RunAsync();
+
+if (args.Length == 1 && args[0] == "exact-activation-tests")
+    return await HoYoShadeHub.Extensions.Tests.ExactGameActivationTests.RunAsync();
+
+if (args.Length == 1 && args[0] == "profile-authority-tests")
+    return HoYoShadeHub.Extensions.Tests.OptiScalerProfileAuthorityTests.Run();
+
+if (args.Length == 1 && args[0] == "pack-auto-startup-tests")
+    return HoYoShadeHub.Extensions.Tests.PackAutoStartupCleanupTests.Run();
+
+if (args.Length == 1 && args[0] == "package-drop-tests")
+{
+    HoYoShadeHub.Extensions.Tests.PackageDropInputTests.Run();
+    return 0;
+}
+
 if (args.Length == 1 && args[0] == "mod-preview-tests")
     return HoYoShadeHub.Extensions.Tests.ModPreviewTests.Run();
 

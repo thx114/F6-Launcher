@@ -33,6 +33,7 @@ internal static class LauncherRegressionTests
         await Run("Launch INI target preparation", () => { GameLaunchIniPreparationTests.Run(); return Task.CompletedTask; });
         await Run("Preset selection", () => { OptiScalerPresetSelectionTests.Run(); return Task.CompletedTask; });
         await Run("Package installation", PackageInstallSafetyTests.RunAsync);
+        await Run("Package drop input", () => { PackageDropInputTests.Run(); return Task.CompletedTask; });
         await Run("Download protocol", async () =>
         {
             if (await DownloadServiceTests.RunAsync() != 0) throw new InvalidOperationException("Download tests failed.");
