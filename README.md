@@ -4,7 +4,7 @@ HoYoShade Hub 的非官方 DLSS5 分支，用于管理米哈游/自定义游戏�
 
 本产品名称为 **F6 Launcher**，由 thx114 独立维护，与上游官方无隶属关系。
 原作者为 **哆啦D夢|DuolaD**。来源说明及第三方许可见 [NOTICE.md](NOTICE.md)、
-[LICENSE](LICENSE) 和 [Starward_LICENSE](Starward_LICENSE)。本分支不使用上游官方的私有镜像 API。
+[LICENSE](LICENSE) 和 [Starward_LICENSE](Starward_LICENSE)。
 
 ## 功能
 
@@ -26,21 +26,7 @@ HoYoShade Hub 的非官方 DLSS5 分支，用于管理米哈游/自定义游戏�
 从 [Releases](https://github.com/thx114/F6-Launcher/releases) 下载
 `F6Launcher_Portable_<版本>_x64.zip`，解压到便携版目录并覆盖旧文件。
 
-GitHub 发行仅提供普通便携 ZIP，解压后运行 **F6Launcher.exe**。包内原样保留 MIT `LICENSE`、`Starward_LICENSE` 和 `NOTICE.md`，不单独上传许可或校验附件。Full 包仅在本地构建与交付，本次不上传 F5 覆盖包。
-历史 `HoYoShadeHub.exe` 入口仅为已有安装的更新兼容而保留；程序及图标均为 F6 Launcher。
-旧启动器发行包已停止推荐，合规更新后不提供回退到这些旧包的入口。
-
-包不包含 `config.ini`，不会覆盖已有配置、游戏列表和用户数据。当前目录结构为：
-
-```text
-F6Launcher.exe
-HoYoShadeHub.exe
-version.ini
-LICENSE
-Starward_LICENSE
-NOTICE.md
-app-<版本>/
-```
+包不包含 `config.ini`，不会覆盖已有配置、游戏列表和用户数据。
 
 ## 构建
 
