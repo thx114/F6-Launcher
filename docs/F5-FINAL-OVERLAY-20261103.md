@@ -12,15 +12,17 @@ SF 已对照制作时远端 `main:catalog/dll-fingerprints.json` 的最新收录
 
 ## 交付与安装顺序
 
-1. 程序更新：`D:\CODE\HoyoDLSS5\build\release\HoYoShadeHub_F5OfflineNr_20261103_update.zip`。正常退出启动器并备份 `app-1.4.6.12` 后，解压到 test 便携根目录覆盖。程序更新包含包内 NR 校验导入、缺失 profile 初始化，以及在缓存同卷暂存覆盖包的修复。
+1. 推荐先升级启动器至 **1.4.7**。新安装使用 `HoYoShadeHub_Portable_1.4.7_x64_Full.zip`，其中包含 HoYoShade 框架；现有安装可通过启动器检查更新使用普通便携更新包。1.4.7 已包含包内 NR 校验导入、缺失 profile 初始化及缓存同卷暂存修复，升级后直接执行下一步，不再应用旧增量 ZIP。
 2. 游戏覆盖包：`D:\CODE\HoyoDLSS5\build\release\F5_三游戏覆盖包_Final_20261103.zip`。将原始 ZIP 导入全局插件页；再到对应游戏插件页确认一次性动作。不要把程序更新 ZIP 当游戏覆盖包导入。
 
 本次未应用到正在使用的启动器，未启动或停止游戏，未更改真实用户数据库、profile 或画质设置。
 
+`D:\CODE\HoyoDLSS5\build\release\HoYoShadeHub_F5OfflineNr_20261103_update.zip` 仅保留为历史 `app-1.4.6.12` 基线的专用增量，不适用于 1.4.7；不要与 1.4.7 重复安装，也不要作为游戏覆盖包导入。
+
 | 交付 | 字节数 | ZIP SHA256 |
 |---|---:|---|
 | F5 三游戏覆盖包 | 989518202 | `01C1995E99C4DA16FB87AD4D5BFB4B2F44E559F20F3301C9A555197E97277CC1` |
-| 启动器程序更新 | 2294437 | `26AF58651BF2C4B453C8EA94A1EF1132D552739617BC955B97FCC9385C4BED28` |
+| 历史 app-1.4.6.12 专用增量（1.4.7 不需要） | 2294437 | `26AF58651BF2C4B453C8EA94A1EF1132D552739617BC955B97FCC9385C4BED28` |
 
 ## 配置与内容边界
 
