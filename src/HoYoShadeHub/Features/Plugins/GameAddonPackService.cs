@@ -70,18 +70,7 @@ internal static class GameAddonPackService
         // 游戏一出现（Sync 在启动/插件页时都会跑）就把它铺进包目录，随后的动作确认框才能弹出。
         try
         {
-            string pendingRoot = Path.Combine(cacheRoot, "games", ".pending-gamepacks");
-            if (Directory.Exists(pendingRoot))
-            {
-                foreach (string hintDir in Directory.EnumerateDirectories(pendingRoot))
-                {
-                    string hint = Path.GetFileName(hintDir);
-                    if (!gameKey.StartsWith(hint, StringComparison.OrdinalIgnoreCase))
-                        continue;
-                    if (!PackPendingMigration.TryMigrate(hintDir, packDirectory, out string? error))
-                        throw new IOException("Pending 覆盖包迁移未完成；源内容保留：" + error);
-                }
-            }
+            PackPendingMigration.PlaceMatching(cacheRoot, gameKey);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

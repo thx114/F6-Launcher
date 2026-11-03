@@ -95,6 +95,11 @@ public static partial class LauncherActionRunner
             && (!fromPack || (context.GameBiz is { } biz && PackActionConsent.IsConsented(biz.Value, hash)
                 && !PackActionConsent.DisabledActions(biz.Value, hash).Contains(action.Name)));
         if (!Current()) return PackActionOncePolicy.Block("✗ 未获同意、已禁用或上下文已变化；动作批次已阻断。", PackActionOncePolicy.BlockReason.ContextChanged);
+        IEnumerable<PackAutoAction> requirementActions = fromPack
+            ? snapshot!.LoadActions().Where(candidate => !PackActionConsent.DisabledActions(context.GameBiz!.Value.Value, hash).Contains(candidate.Name))
+            : [action];
+        if (await CheckLauncherRequirementsAsync(requirementActions, context) is { } unmet) return unmet;
+        if (!Current()) return PackActionOncePolicy.Block("✗ 版本检查期间上下文已变化；动作批次已阻断。", PackActionOncePolicy.BlockReason.ContextChanged);
         if (fromPack)
             return await PackActionOncePolicy.RunSnapshotAsync(action, snapshot!, context.PackRoot!, Current,
                 step => DispatchStepAsync(step, context), context.Report);
@@ -127,6 +132,7 @@ public static partial class LauncherActionRunner
     private static async Task<string> DispatchStepAsync(PackActionStep step, LauncherActionContext context)
         => step.Action.Trim().ToLowerInvariant() switch
         {
+            "require_launcher_version" or "request_launcher_version" => CheckLauncherVersion(step),
             // ===== 插件 =====
             "set_addon" or "set_addons" => SetAddons(step, context),
 

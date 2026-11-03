@@ -12,10 +12,12 @@ SF 已对照制作时远端 `main:catalog/dll-fingerprints.json` 的最新收录
 
 ## 交付与安装顺序
 
-1. 推荐先升级启动器至 **1.4.7**。新安装使用 `HoYoShadeHub_Portable_1.4.7_x64_Full.zip`，其中包含 HoYoShade 框架；现有安装可通过启动器检查更新使用普通便携更新包。1.4.7 已包含包内 NR 校验导入、缺失 profile 初始化及缓存同卷暂存修复，升级后直接执行下一步，不再应用旧增量 ZIP。
-2. 游戏覆盖包：`D:\CODE\HoyoDLSS5\build\release\F5_三游戏覆盖包_Final_20261103.zip`。将原始 ZIP 导入全局插件页；再到对应游戏插件页确认一次性动作。不要把程序更新 ZIP 当游戏覆盖包导入。
+1. 推荐先升级启动器至 **1.4.7.1**。新安装使用 `HoYoShadeHub_Portable_1.4.7.1_x64_Full.zip`，其中包含 HoYoShade 框架；现有安装可通过启动器检查更新使用普通便携更新包。1.4.7.1 修复首次导入时丢失 NR 子目录的问题，并支持包的最低版本检查，不再应用旧增量 ZIP。
+2. 游戏覆盖包：`D:\CODE\HoyoDLSS5\build\release\[原铁绝]F5_v4.1.zip`。将原始 ZIP 导入全局插件页；再到对应游戏插件页确认一次性动作。三款游戏都先执行 `require_launcher_version(minVersion: "1.4.7.1")`。此前已经导入失败的安装也需重新导入新 ZIP，程序升级本身不会恢复被旧版删除的 NR 子目录。
 
 本次未应用到正在使用的启动器，未启动或停止游戏，未更改真实用户数据库、profile 或画质设置。
+
+2026-11-03 后续修订：用户要求自行测试，因此版本门槛新增后的 UI、安装、动作与游戏验证由用户执行；构建和 ZIP 内容校验不视为该轮运行验收。F5 v4.1 只更新动作及交付元数据，冻结 Opt/NR DLL 与游戏配置不变。下表 SHA256 为原 Final 历史记录；v4.1 的校验值以相邻 `.sha256` 与 `.verification.json` 为准。
 
 `D:\CODE\HoyoDLSS5\build\release\HoYoShadeHub_F5OfflineNr_20261103_update.zip` 仅保留为历史 `app-1.4.6.12` 基线的专用增量，不适用于 1.4.7；不要与 1.4.7 重复安装，也不要作为游戏覆盖包导入。
 
@@ -30,7 +32,7 @@ SF 已对照制作时远端 `main:catalog/dll-fingerprints.json` 的最新收录
 
 运行依赖使用根白名单及 OptiScaler/plugins/licenses 目录白名单，保留两套各自独立的 Streamline。排除 F6、备份、捕获、日志、转储、`.pending`、过期 redist manifest 和旧 README。plugins 当前为空，没有额外补入 ASI。
 
-包内 59 个条目，所有 NR DLL 随包提供。共享默认 NR 为 SF；原神动作选择 v4。每个游戏单独包含 NR 文件与 `auto.json`，以包内相对路径、SHA256、x64 PE、已知指纹验证后归档。运行时使用严格硬链接。首次动作顺序为 `set_opt_build` → `import_opt_config` → `set_opt_config(if_missing:true)` → `set_opt_nr(file+sha256)`；全部 once。
+包内 59 个条目，所有 NR DLL 随包提供。共享默认 NR 为 SF；原神动作选择 v4。每个游戏单独包含 NR 文件与 `auto.json`，以包内相对路径、SHA256、x64 PE、已知指纹验证后归档。运行时使用严格硬链接。v4.1 的动作顺序为 `require_launcher_version(minVersion: "1.4.7.1")` → `set_opt_build` → `import_opt_config` → `set_opt_config(if_missing:true)` → `set_opt_nr(file+sha256)`。配置动作按 once 执行；最低版本作为前置条件每次重查。
 
 不向官方目录直接覆盖 root INI 或 profiles。已有游戏 profile 和对应 preset/follow 绑定保留，仅缺失 profile 才从对应 F5 便携配置初始化。便携转换只处理日志路径、Plugins Path 和 OptiDllPath；其余质量、倍率、方向参数沿用冻结配置。全局 Opt 选择不改变。
 

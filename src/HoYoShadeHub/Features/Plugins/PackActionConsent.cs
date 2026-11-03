@@ -115,6 +115,8 @@ public static class PackActionDescriber
 
         return action switch
         {
+            "require_launcher_version" or "request_launcher_version" =>
+                $"要求启动器版本 ≥ {step.GetString("minVersion") ?? step.GetString("version") ?? "（缺 minVersion）"}；版本不足时提示更新并停止动作",
             "set_addon" or "set_addons" => enabled is null
                 ? "开关插件（缺 enabled）"
                 : $"{(enabled.Value ? "启用" : "禁用")}插件"
@@ -146,6 +148,10 @@ public static class PackActionDescriber
             "set_opt_config" or "apply_opt_config" or "select_opt_config" => $"选择 OptiScaler 配置 {name}",
             "set_window_mode" or "force_window_mode" => $"窗口模式 → {step.GetString("value")}{(step.GetString("only_if") is { } oi ? $"（仅当 {oi}）" : "")}",
             "set_opt_build" or "set_optiscaler_build" or "select_opt_build" => $"为当前游戏选择 OptiScaler 构建 {step.GetString("build") ?? (step.GetString("source") + "/" + step.GetString("version"))}",
+            "set_opt_nr" or "set_optiscaler_nr" => step.GetBool("default") == true
+                ? "恢复当前游戏的 OptiScaler 构建默认 NR"
+                : $"为当前游戏选择 OptiScaler NR {step.GetString("version") ?? "（缺 version）"}"
+                  + (step.GetString("file") is not null ? "（校验并导入包内 DLL）" : string.Empty),
             "set_ini_keys" or "set_ini" or "write_ini" => $"写入 ini 键（set {IniKeyCount(step)} 个）{(step.GetBool("once") == true ? "，仅一次" : "")}",
             "override_files" => target switch
             {

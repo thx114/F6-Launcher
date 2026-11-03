@@ -6,7 +6,7 @@ namespace HoYoShadeHub.Extensions.ReShade;
 /// <summary>纯策略：包动作按逻辑步骤永久 once；内置动作不因 PackRoot 存在而变成包动作。</summary>
 public static class PackActionOncePolicy
 {
-    public enum BlockReason { None, ContextChanged, Pending, NeedsMigration, Failed, LedgerUnavailable }
+    public enum BlockReason { None, ContextChanged, Pending, NeedsMigration, Failed, LedgerUnavailable, RequirementNotMet }
     public sealed record ExecutionResult(string Summary, bool Blocked, BlockReason Reason);
     public static ExecutionResult Block(string summary, BlockReason reason) => new(summary, true, reason);
 

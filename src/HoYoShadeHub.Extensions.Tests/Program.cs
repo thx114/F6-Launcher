@@ -77,6 +77,12 @@ if (args.Length == 1 && args[0] == "package-install-tests")
     return 0;
 }
 
+if (args.Length == 1 && args[0] == "pack-consent-migration-tests")
+{
+    Console.WriteLine($"PASS {HoYoShadeHub.Extensions.Tests.PackConsentMigrationTests.Run()} consent and pending migration checks");
+    return 0;
+}
+
 if (args.Length == 1 && args[0] == "ui-runtime-tests")
     return (await HoYoShadeHub.Extensions.Tests.UiRuntimeTests.RunAsync()).Failed == 0 ? 0 : 1;
 

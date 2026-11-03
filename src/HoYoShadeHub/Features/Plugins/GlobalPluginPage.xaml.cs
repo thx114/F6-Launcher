@@ -3113,7 +3113,7 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
                 // 包里的 GamePack（auto.json）已铺进各游戏包目录：动作确认现在就办，
                 // 确认后立即执行（一次性；启动前的 runOnLaunch 靠 once 记账自动跳过）。
                 // 没有 auto.json 的旧包这里直接返回空串，行为不变。
-                string packSummary = result.GamePackReplaced
+                PackImportActionResult packActions = result.GamePackReplaced
                     ? await OverlayPackActionPrompter.PromptAndRunAsync(
                         XamlRoot,
                         _manager?.Host ?? PluginHostLocator.Resolve(out _),
@@ -3122,11 +3122,8 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
                             ? []
                             : [result.GamePackGameHint]),
                         refreshReimportedPack: true)
-                    : string.Empty;
-                if (packSummary.Length > 0)
-                {
-                    ShowInfo("覆盖包动作执行完成", packSummary, InfoBarSeverity.Success);
-                }
+                    : new(string.Empty);
+                ShowPackActionResult(packActions);
                 break;
         }
 
@@ -4503,6 +4500,13 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
     #endregion
 
     #region InfoBar
+
+    private void ShowPackActionResult(PackImportActionResult result)
+    {
+        if (result.Summary.Length == 0) return;
+        ShowInfo(result.HasFailures ? "覆盖包动作未全部完成" : "覆盖包动作执行完成",
+            result.Summary, result.HasFailures ? InfoBarSeverity.Warning : InfoBarSeverity.Success);
+    }
 
     private void ShowInfo(string title, string message, InfoBarSeverity severity)
     {

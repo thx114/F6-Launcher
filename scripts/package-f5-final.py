@@ -114,6 +114,7 @@ def main():
         version, sha = NR[nr_key]
         generated[f'GamePack/{game}/{config}'] = PORTABLE.portable_ini((source / profile).read_bytes(), source)
         steps = [
+            {'action': 'require_launcher_version', 'minVersion': '1.4.7.1'},
             {'action': 'set_opt_build', 'build': 'official/DLSS F5', 'once': True},
             {'action': 'import_opt_config', 'file': config, 'name': name, 'once': True},
             {'action': 'set_opt_config', 'name': name, 'if_missing': True, 'once': True},
@@ -123,14 +124,16 @@ def main():
     generated[PREFIX + 'build.json'] = encode({
         'sourceId': 'official', 'version': 'DLSS F5', 'assetName': output.name,
         'packageVersion': 'final-20261103', 'main': pins['OptiScaler.dll'],
-        'requiresLauncherCapabilities': ['set_opt_nr.file.sha256', 'set_opt_config.if_missing'],
+        'requiresLauncherCapabilities': ['set_opt_nr.file.sha256', 'set_opt_config.if_missing', 'require_launcher_version'],
+        'minLauncherVersion': '1.4.7.1',
         'defaultNr': NR['sf'][0], 'gameNr': {g: NR[key][0] for g, (_, _, key) in GAMES.items()},
         'gameTestedByPackaging': False,
     })
     generated['README-F5-Final.md'] = '''# F5 三游戏覆盖包（2026-11-03 冻结版）
 
-先安装随附交付的 HoYoShadeHub_F5OfflineNr_20261103_update.zip 程序更新，再将本原始 ZIP 导入启动器全局插件页。
-程序更新与游戏覆盖包用途不同；程序更新解压覆盖便携目录，游戏覆盖包直接导入，不先解压。
+先将启动器升级至 1.4.7.1 或更新版本，再将本原始 ZIP 导入启动器全局插件页。
+新安装使用 Full 包；游戏覆盖包直接导入，不先解压。不再使用 app-1.4.6.12 专用旧增量。
+动作首先检查启动器最低版本，不足时提示更新并停止后续步骤。
 在各游戏插件页确认一次性动作后，三款游戏分别选择 official/DLSS F5：
 - 原神：原神v4_预设A_1080p5000。
 - 崩铁与绝区零：310.9.16-SF（制作时启动器远端目录收录的最新 SF）。
@@ -184,8 +187,8 @@ NR DLL 随包提供，动作以 SHA256 校验后归档、硬链接至独立游�
                 archive.writestr(name, data)
                 rows.append({'path': name, 'size': len(data), 'sha256': hashlib.sha256(data).hexdigest()})
             manifest = {
-                'hysxOverlay': 1, 'name': 'F5 三游戏覆盖包', 'version': 'final-20261103',
-                'note': '先更新启动器以支持包内NR校验导入；已有游戏配置保留。',
+                'hysxOverlay': 1, 'name': 'F5 三游戏覆盖包', 'version': 'final-20261103-launcher-1.4.7.1',
+                'note': '要求启动器至少 1.4.7.1；先更新，再导入。已有游戏配置保留。',
                 'gamePacks': [{'game': g, 'path': 'GamePack/' + g} for g in GAMES],
                 'targets': [{'from': 'OptiScaler', 'to': 'optiscaler'}],
                 'optiscaler': {'sourceId': 'official', 'version': 'DLSS F5', 'select': False},

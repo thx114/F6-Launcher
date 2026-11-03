@@ -55,6 +55,33 @@ internal static class PackConsentMigrationTests
             File.WriteAllText(Path.Combine(source, PackOnceLedger.FileName), "replacement");
             Check(!PackPendingMigration.TryMigrate(source, target, out _) && Directory.Exists(source)
                 && File.ReadAllText(Path.Combine(target, PackOnceLedger.FileName)) == "existing ledger", "Pending cannot overwrite once history");
+
+            string cache = Path.Combine(root, "cache");
+            string pending = Path.Combine(cache, "games", ".pending-gamepacks", "hk4e");
+            string gamePack = GameAddonPack.PackDirectory(cache, "hk4e_cn");
+            Directory.CreateDirectory(Path.Combine(pending, "NR"));
+            File.WriteAllText(Path.Combine(pending, "auto.json"), "new actions");
+            byte[] nr = [0, 1, 2, 3, 255]; // File transport fixture; never loaded as a DLL.
+            File.WriteAllBytes(Path.Combine(pending, "NR", "nvngx_dlssnr.dll"), nr);
+            Check(PackPendingMigration.PlaceMatching(cache, "nap_cn") == 0 && Directory.Exists(pending),
+                "Unrelated game does not consume pending F5 payload");
+            Directory.CreateDirectory(gamePack);
+            File.WriteAllText(Path.Combine(gamePack, "auto.json"), "old actions");
+            using (var held = new FileStream(Path.Combine(gamePack, "auto.json"), FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            {
+                bool blocked = false;
+                try { PackPendingMigration.PlaceMatching(cache, "hk4e_cn"); }
+                catch (IOException) { blocked = true; }
+                Check(blocked && File.Exists(Path.Combine(pending, "NR", "nvngx_dlssnr.dll")),
+                    "Shared import placement fails closed and retains nested NR source");
+            }
+            Check(PackPendingMigration.PlaceMatching(cache, "hk4e_cn") == 1 && !Directory.Exists(pending),
+                "First-import shared placement completes before removing pending source");
+            Check(File.ReadAllBytes(Path.Combine(gamePack, "NR", "nvngx_dlssnr.dll")).SequenceEqual(nr)
+                && File.ReadAllText(Path.Combine(gamePack, "auto.json")) == "new actions",
+                "First-import placement retains NR subdirectory and action file together");
+            Check(PackPendingMigration.PlaceMatching(cache, "hk4e_cn") == 0,
+                "Completed first-import placement is idempotent");
         }
         finally { Directory.Delete(root, recursive: true); }
         return passed;

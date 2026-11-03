@@ -5,6 +5,27 @@ namespace HoYoShadeHub.Extensions.ReShade;
 
 public static class PackPendingMigration
 {
+    /// <summary>导入确认与游戏同步共用入口；完整迁移后才允许读取 auto.json 授权。</summary>
+    public static int PlaceMatching(string cacheRoot, string gameKey)
+    {
+        PackageTree.ValidateGame(gameKey);
+        string games = PackageTree.ResolveRelative(cacheRoot, "games");
+        string pendingRoot = PackageTree.ResolveRelative(games, ".pending-gamepacks");
+        if (!Directory.Exists(pendingRoot)) return 0;
+        string destination = GameAddonPack.PackDirectory(cacheRoot, gameKey);
+        int migrated = 0;
+        foreach (string directory in Directory.EnumerateDirectories(pendingRoot).Order(StringComparer.OrdinalIgnoreCase))
+        {
+            string hint = Path.GetFileName(directory);
+            if (!gameKey.StartsWith(hint, StringComparison.OrdinalIgnoreCase)) continue;
+            string source = PackageTree.ResolveRelative(pendingRoot, hint);
+            if (!TryMigrate(source, destination, out string? error))
+                throw new IOException("Pending 覆盖包迁移未完成；源内容保留：" + error);
+            migrated++;
+        }
+        return migrated;
+    }
+
     public static bool TryMigrate(string sourceRoot, string destinationRoot, out string? error)
     {
         string? stage = null;

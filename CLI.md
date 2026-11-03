@@ -64,6 +64,7 @@ JSON 三种形态等价：`{"steps":[...]}` / `{"actions":[...]}` / 裸数组 `[
 | `import_preset` / `apply_preset` | 预设导入 / 应用 |
 | `switch_dll` | DLL 版本切换 |
 | `set_opt_nr` / `set_optiscaler_nr` | 当前游戏的 OptiScaler 独立 NR；`version` 指定名称，`default:true` 恢复构建默认；`file` + `sha256` 校验并导入包内 x64 DLL，`download:false` 禁止缺失版本下载 |
+| `require_launcher_version` / `request_launcher_version` | `minVersion` 指定最低启动器版本（兼容 `version`）；不足时提示更新并阻止后续动作。属于每次重查的前置条件，不被 once 成功记录跳过；1.4.7.1 起支持 |
 | `set_inject_mode` / `set_inject_delay` / `set_cmd_launch` / `set_cmd_args` / `set_game_setting` | 其余启动设置 |
 
 ## 其它动词

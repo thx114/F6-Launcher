@@ -155,10 +155,9 @@ public static class PackActionExecutor
     }
 
     /// <summary>逐个执行没被禁用的动作，返回每个动作的一行摘要</summary>
-    public static async Task<List<string>> RunAsync(
+    public static async Task<List<PackActionOncePolicy.ExecutionResult>> RunAsync(
         IEnumerable<PackAutoAction> actions, IReadOnlySet<string> disabled, LauncherActionContext context)
     {
-        var results = new List<string>();
         List<PackActionOncePolicy.ExecutionResult> batch = await PackActionOncePolicy.RunBatchAsync(
             actions.Where(action => !disabled.Contains(action.Name)),
             async action =>
@@ -166,11 +165,11 @@ public static class PackActionExecutor
                 var result = await LauncherActionRunner.RunResultAsync(action, context, isPackAction: true);
                 return result with { Summary = $"「{action.Name}」：{result.Summary}" };
             });
-        foreach (var result in batch) results.Add(result.Summary);
-
-        return results;
+        return batch;
     }
 }
+
+public sealed record PackImportActionResult(string Summary, bool HasFailures = false);
 
 /// <summary>
 /// 导入覆盖包后的「动作一并办掉」：扫所有已装游戏的包目录，auto.json 还没同意过的
@@ -187,18 +186,20 @@ public static class OverlayPackActionPrompter
 {
     private static readonly ILogger _logger = AppConfig.GetLogger<GamePluginPage>();
 
-    /// <returns>执行结果汇总（没有待办 / 用户都点了「下次再说」= 空串）</returns>
-    public static async Task<string> PromptAndRunAsync(XamlRoot xamlRoot, ShadeHost? host, Action<string>? report,
+    /// <returns>结构化执行结果；没有待办或全部延后时摘要为空。</returns>
+    public static async Task<PackImportActionResult> PromptAndRunAsync(XamlRoot xamlRoot, ShadeHost? host, Action<string>? report,
         IReadOnlyCollection<string>? refreshGameHints = null, bool refreshReimportedPack = false)
     {
         // 按 auto.json 内容 hash 分组：同一份包内容（多个服共用一份）只弹一次窗
         var groups = new Dictionary<string, (string PackRoot, string Hash, List<PackAutoAction> Actions,
             List<(GameId Id, GameEntry Entry, PackAutoActionSnapshot Snapshot)> Games)>();
+        var summaries = new List<string>();
+        bool hasFailures = false;
 
         string cacheRoot = AppConfig.CacheRoot;
         if (string.IsNullOrWhiteSpace(cacheRoot))
         {
-            return string.Empty;
+            return new(string.Empty);
         }
 
         try
@@ -251,7 +252,14 @@ public static class OverlayPackActionPrompter
 
                 // 暂存的 GamePack 先铺进包目录（同 GameAddonPackService.Sync 的暂存逻辑）：
                 // 全新实例导入时 cache\games\ 还没有这个游戏的目录，不铺的话弹窗永远不会在导入当场弹
-                PlacePendingGamePacks(cacheRoot, gameKey, packRoot);
+                try { PackPendingMigration.PlaceMatching(cacheRoot, gameKey); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+                {
+                    _logger.LogWarning(ex, "Place pending pack before consent ({Game})", gameKey);
+                    summaries.Add($"【{entry.DisplayName}】暂存覆盖包迁移失败，未执行动作：{ex.Message}");
+                    hasFailures = true;
+                    continue;
+                }
 
                 PackAutoActionSnapshot? snapshot = PackAutoActionSnapshot.TryLoad(packRoot);
                 if (snapshot is null)
@@ -277,15 +285,15 @@ public static class OverlayPackActionPrompter
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Scan pack actions on import");
-            return string.Empty;
+            summaries.Add("扫描覆盖包动作失败，未继续执行：" + ex.Message);
+            return new(string.Join("\n\n", summaries), true);
         }
 
         if (groups.Count == 0)
         {
-            return string.Empty;
+            return new(string.Join("\n\n", summaries), hasFailures);
         }
 
-        var summaries = new List<string>();
         foreach (var (packRoot, hash, actions, games) in groups.Values)
         {
             string gameNames = string.Join("、", games.Select(g => g.Entry.DisplayName));
@@ -297,6 +305,8 @@ public static class OverlayPackActionPrompter
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Pack action consent prompt on import");
+                summaries.Add($"【{gameNames}】动作确认失败，未执行：{ex.Message}");
+                hasFailures = true;
                 continue;
             }
 
@@ -315,6 +325,7 @@ public static class OverlayPackActionPrompter
                     if (snapshot.Hash != hash || !snapshot.IsCurrent(gamePackRoot))
                     {
                         summaries.Add($"【{entry.DisplayName}】包内容已变化，需显式重新确认；未执行。");
+                        hasFailures = true;
                         continue;
                     }
                     PackActionConsent.Save(id.GameBiz.Value, hash, disabled);
@@ -343,71 +354,23 @@ public static class OverlayPackActionPrompter
 
                     LauncherActionContext context = PackActionExecutor.BuildContext(
                         id, entry, host, gamePackRoot, xamlRoot, interactive: true, report, snapshot);
-                    List<string> results = await PackActionExecutor.RunAsync(snapshot.LoadActions(), disabledSet, context);
+                    List<PackActionOncePolicy.ExecutionResult> results = await PackActionExecutor.RunAsync(snapshot.LoadActions(), disabledSet, context);
+                    hasFailures |= results.Any(result => result.Blocked);
                     if (results.Count > 0)
                     {
-                        summaries.Add($"【{entry.DisplayName}】\n" + string.Join("\n", results));
+                        summaries.Add($"【{entry.DisplayName}】\n" + string.Join("\n", results.Select(result => result.Summary)));
                     }
                 }
                 catch (Exception ex)
                 {
                     _logger.LogWarning(ex, "Run pack actions on import for {Game}", id.GameBiz.Value);
                     summaries.Add($"【{entry.DisplayName}】执行失败：{ex.Message}");
+                    hasFailures = true;
                 }
             }
         }
 
-        return string.Join("\n\n", summaries);
+        return new(string.Join("\n\n", summaries), hasFailures);
     }
 
-    /// <summary>
-    /// 把 .pending-gamepacks\&lt;hint&gt; 里 hint 前缀匹配这个游戏键的暂存 GamePack 铺进包目录
-    /// （与 GameAddonPackService.Sync 的暂存铺放同一逻辑，铺完删除暂存）。
-    /// </summary>
-    private static void PlacePendingGamePacks(string cacheRoot, string gameKey, string packRoot)
-    {
-        try
-        {
-            string pendingRoot = Path.Combine(cacheRoot, "games", ".pending-gamepacks");
-            if (!Directory.Exists(pendingRoot))
-            {
-                return;
-            }
-
-            foreach (string hintDir in Directory.EnumerateDirectories(pendingRoot))
-            {
-                string hint = Path.GetFileName(hintDir);
-                if (!gameKey.StartsWith(hint, StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;
-                }
-
-                Directory.CreateDirectory(packRoot);
-                foreach (string pendingFile in Directory.EnumerateFiles(hintDir))
-                {
-                    try
-                    {
-                        File.Copy(pendingFile, Path.Combine(packRoot, Path.GetFileName(pendingFile)), overwrite: true);
-                    }
-                    catch
-                    {
-                        // 占用中下轮再铺
-                    }
-                }
-
-                try
-                {
-                    Directory.Delete(hintDir, recursive: true);
-                }
-                catch
-                {
-                    // 删不掉就留着，下次再清
-                }
-            }
-        }
-        catch
-        {
-            // 暂存铺放只是增强，不挡主流程
-        }
-    }
 }
