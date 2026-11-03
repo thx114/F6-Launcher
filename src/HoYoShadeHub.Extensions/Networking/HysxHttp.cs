@@ -11,7 +11,7 @@ namespace HoYoShadeHub.Extensions.Networking;
 /// </summary>
 public static class HysxHttp
 {
-    public const string UserAgent = "HoYoShadeHub-Extensions";
+    public const string UserAgent = "F6Launcher-Extensions";
 
     /// <summary>GitHub 上的资源统一走这个前缀，方便用户换镜像</summary>
     public static string? ProxyUrl { get; set; }
@@ -36,7 +36,9 @@ public static class HysxHttp
     /// </summary>
     public static string Apply(string url, string? proxyUrl = null)
     {
+        ForkNetworkPolicy.EnsureAllowed(url);
         string? prefix = string.IsNullOrWhiteSpace(proxyUrl) ? ProxyUrl : proxyUrl;
+        ForkNetworkPolicy.EnsureAllowed(prefix);
         if (string.IsNullOrWhiteSpace(prefix))
         {
             return url;

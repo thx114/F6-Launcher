@@ -1,4 +1,4 @@
-﻿using Microsoft.Win32;
+using Microsoft.Win32;
 
 namespace HoYoShadeHub.Setup.Services;
 
@@ -9,9 +9,9 @@ public static class RegistryHelper
     {
         string exe = Path.Combine(folder, "HoYoShadeHub.exe");
         string setupExe = Path.Combine(folder, "HoYoShadeHub.Setup.exe");
-        using var subkey = Registry.LocalMachine.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\HoYoShade Hub");
-        subkey.SetValue("Publisher", "HoYoShade Hub Team", RegistryValueKind.String);
-        subkey.SetValue("DisplayName", "HoYoShade Hub", RegistryValueKind.String);
+        using var subkey = Registry.LocalMachine.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\F6 Launcher");
+        subkey.SetValue("Publisher", "thx114", RegistryValueKind.String);
+        subkey.SetValue("DisplayName", "F6 Launcher", RegistryValueKind.String);
         subkey.SetValue("DisplayIcon", exe, RegistryValueKind.String);
         subkey.SetValue("DisplayVersion", version, RegistryValueKind.String);
         subkey.SetValue("InstallLocation", folder, RegistryValueKind.String);
@@ -24,17 +24,17 @@ public static class RegistryHelper
 
     public static void DeleteUninstallInfo()
     {
-        Registry.LocalMachine.DeleteSubKeyTree(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\HoYoShade Hub", false);
+        Registry.LocalMachine.DeleteSubKeyTree(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\F6 Launcher", false);
     }
 
 
     public static void WriteUrlProtocol(string folder)
     {
-        Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\HoYoShade Hub", false);
-        Registry.SetValue(@"HKEY_LOCAL_MACHINE\Software\Classes\HoYoShade Hub", "", "URL:HoYoShadeHub Protocol");
-        Registry.SetValue(@"HKEY_LOCAL_MACHINE\Software\Classes\HoYoShade Hub", "URL Protocol", "");
-        Registry.SetValue(@"HKEY_LOCAL_MACHINE\Software\Classes\HoYoShade Hub\DefaultIcon", "", "HoYoShadeHub.exe,1");
-        Registry.SetValue(@"HKEY_LOCAL_MACHINE\Software\Classes\HoYoShade Hub\Shell\Open\Command", "", $"""
+        Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\F6Launcher", false);
+        Registry.SetValue(@"HKEY_LOCAL_MACHINE\Software\Classes\F6Launcher", "", "URL:F6Launcher Protocol");
+        Registry.SetValue(@"HKEY_LOCAL_MACHINE\Software\Classes\F6Launcher", "URL Protocol", "");
+        Registry.SetValue(@"HKEY_LOCAL_MACHINE\Software\Classes\F6Launcher\DefaultIcon", "", "HoYoShadeHub.exe,1");
+        Registry.SetValue(@"HKEY_LOCAL_MACHINE\Software\Classes\F6Launcher\Shell\Open\Command", "", $"""
             "{Path.Combine(folder, "HoYoShadeHub.exe")}" "%1"
             """);
     }
@@ -42,20 +42,20 @@ public static class RegistryHelper
 
     public static void DeleteUrlProtocol()
     {
-        Registry.LocalMachine.DeleteSubKeyTree(@"Software\Classes\HoYoShade Hub", false);
+        Registry.LocalMachine.DeleteSubKeyTree(@"Software\Classes\F6Launcher", false);
     }
 
 
     public static string? GetInstallLocation()
     {
-        using var subkey = Registry.LocalMachine.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\HoYoShade Hub");
+        using var subkey = Registry.LocalMachine.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\F6 Launcher");
         return subkey?.GetValue("InstallLocation") as string;
     }
 
 
     public static void DeleteRegistrySetting()
     {
-        Registry.CurrentUser.DeleteSubKeyTree(@"Software\HoYoShade Hub", false);
+        Registry.CurrentUser.DeleteSubKeyTree(@"Software\F6 Launcher", false);
     }
 
 }

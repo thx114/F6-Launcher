@@ -118,16 +118,16 @@
     <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
   </resheader>
   <data name="OSVersionLessThan17763" xml:space="preserve">
-    <value>Your OS version is below Windows 10 1809 (Build 17763). Please upgrade to the latest version of Windows to continue installing HoYoShade Hub.</value>
+    <value>Your OS version is below Windows 10 1809 (Build 17763). Please upgrade to the latest version of Windows to continue installing F6 Launcher.</value>
   </data>
   <data name="ASetupIsAlreadyRunning" xml:space="preserve">
     <value>A setup program is already running.</value>
   </data>
   <data name="HoYoShadeHubSetup" xml:space="preserve">
-    <value>HoYoShade Hub Setup</value>
+    <value>F6 Launcher Setup</value>
   </data>
   <data name="HoYoShadeHubLaunch" xml:space="preserve">
-    <value>HoYoShade Hub, Launch!</value>
+    <value>F6 Launcher, Launch!</value>
   </data>
   <data name="GameLauncherForMiHoYo" xml:space="preserve">
     <value>A Next-gen HoYoShade Launcher</value>
@@ -151,7 +151,7 @@
     <value>An error occurred during installation</value>
   </data>
   <data name="HoYoShadeHubUninstaller" xml:space="preserve">
-    <value>HoYoShade Hub Uninstaller</value>
+    <value>F6 Launcher Uninstaller</value>
   </data>
   <data name="UninstallationComplete" xml:space="preserve">
     <value>Uninstallation Complete</value>
@@ -181,7 +181,7 @@
     <value>All files can be safely deleted.</value>
   </data>
   <data name="HoYoShadeHubUpdater" xml:space="preserve">
-    <value>HoYoShade Hub Updater</value>
+    <value>F6 Launcher Updater</value>
   </data>
   <data name="Update" xml:space="preserve">
     <value>Update</value>
@@ -193,7 +193,7 @@
     <value>An error occurred during the update</value>
   </data>
   <data name="HoYoShadeHubIsRunningForceClose" xml:space="preserve">
-    <value>HoYoShade Hub ({0}) is running. Do you want to force close it?</value>
+    <value>F6 Launcher ({0}) is running. Do you want to force close it?</value>
   </data>
   <data name="IHaveReadAndAgreeToThePrivacyPolicy" xml:space="preserve">
     <value>I have read and agree to the User Agreement and Privacy Policy</value>

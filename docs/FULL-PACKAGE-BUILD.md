@@ -1,4 +1,4 @@
-# HoYoShade Hub 完整包构建
+# F6 Launcher 完整包构建
 
 本文记录仓库内 Full 便携包的正式构建方式。启动器和应用必须由仓库脚本构建；不要手工复制旧的 `HoYoShadeHub.exe` 或 `app-*` 目录来代替构建。
 
@@ -6,7 +6,7 @@
 
 入口脚本是仓库根目录的 `package-full.ps1`。它会先调用 `package.ps1 -SkipZip`，由该脚本使用 `dotnet publish` 发布主应用和外层单文件启动器，然后把 HoYoShade 框架及必要资源加入输出目录，最后创建 Full ZIP。基础发布不再额外压缩普通便携 ZIP。
 
-`build.ps1`、`build-local.ps1` 和 `publish.ps1` 是其他构建/发布流程，不是本仓库 Full ZIP 的入口。Full ZIP 需要运行 `package-full.ps1`，不要只运行 `package.ps1`，后者只生成普通便携包。
+Full ZIP 的底层入口是 `package-full.ps1`；`package.ps1` 只生成普通便携包。`publish.ps1` 是本地发布准备入口，调用 Full 脚本后从同一个 Full ZIP 提取普通更新包、生成本分支元数据并检查许可、图标和网络策略，不自动上传 GitHub。`build.ps1` 仅保留为普通便携目录构建的兼容入口。
 
 ## 前置条件
 
@@ -25,7 +25,7 @@ $env:HYSHADE_DOTNET = 'C:\Users\thx11\.dotnet10\dotnet.exe'
 
 # 使用已核对存在 ReShade64.dll 的本机 HoYoShade 源目录
 .\package-full.ps1 `
-    -Version '1.4.6.14' `
+    -Version '1.4.8' `
     -Architecture x64 `
     -Configuration Release `
     -ShadeSource 'D:\APPS\test\TEST\HoYoShadeHub_Portable_1.4.5.0_x64_Full\HoYoShade' `
@@ -35,7 +35,7 @@ $env:HYSHADE_DOTNET = 'C:\Users\thx11\.dotnet10\dotnet.exe'
 发布新版本时只需把 `-Version` 改为目标版本。`-DisabledAddons ''` 会清空随包 `ReShade.ini` 里的本机插件禁用状态，避免把构建机的开关状态预置给用户。Full ZIP 默认使用 `build/full-<版本>/HoYoShadeHub` 作为暂存目录，输出到：
 
 ```text
-<ReleaseDirectory>/HoYoShadeHub_Portable_<版本>_x64_Full.zip
+<ReleaseDirectory>/F6Launcher_Portable_<版本>_x64_Full.zip
 ```
 
 `-ReleaseDirectory` 可选；省略时输出到 `build/release`。仓库磁盘空间不足时可指定其他磁盘上的目录。
@@ -46,7 +46,7 @@ $env:HYSHADE_DOTNET = 'C:\Users\thx11\.dotnet10\dotnet.exe'
 
 每次打包前删除之前的打包占用，不能逐版本积累。成功后只保留本次最终 ZIP、校验 JSON 和小型日志，立即清掉本次解包暂存。Full 脚本通过 `tools/package-storage.ps1` 自动执行：
 
-- 清理仓库 `build` 下的 `full-<版本>`、`portable-<版本>`、`HoYoShadeHub`、旧 `portable-launcher` 暂存目录，以及默认或指定 release 目录内的 `HoYoShadeHub_Portable_*.zip` / `.7z` 和同前缀解包目录。
+- 清理仓库 `build` 下的 `full-<版本>`、`portable-<版本>`、`HoYoShadeHub`、旧 `portable-launcher` 暂存目录，以及默认或指定 release 目录内的 `HoYoShadeHub_Portable_*.zip` / `.7z`、`F6Launcher_Portable_*.zip` / `.7z` 和同前缀解包目录。
 - `-SkipBaseBuild` 仅在打包前保留明确指定的待复用暂存，打包结束仍清理该暂存。不要把运行中的用户安装或唯一框架源当作暂存目录。
 - 删除失败则移动到 `D:\DATA\Documents\ChatGPT\DLSS F5 NEXT\cleanup\HoyoDLSS5-package-<时间>-<标识>`；原路径、逻辑字节数、去向和错误写入 `build/package-storage-cleanup.json`。同盘转移只减少工作区占用，不能宣称释放该磁盘空间。删除和移动均失败时中止并报告。
 - 路径必须处于核准范围，拒绝重解析点；不清理 `.git`、SDK、`_research` 的研究源码、源码 `bin/obj` 构建缓存、test 安装、覆盖包或历史取证记录。截图中 `_research` 与 SDK 的占用不计作已清理的打包临时文件。
@@ -59,7 +59,7 @@ $env:HYSHADE_DOTNET = 'C:\Users\thx11\.dotnet10\dotnet.exe'
 脚本会核验 ZIP 中的必要路径，包括 `version.ini`、`portable-layout.json`、外层启动器、版本化应用、HoYoShade 的 `ReShade64.dll`、`inject.exe` 和 `ReShade.ini`。完成后另外读取每个 ZIP 条目，以检测压缩数据是否可完整解压，并计算文件大小与 SHA256：
 
 ```powershell
-$zip = (Resolve-Path 'build\release\HoYoShadeHub_Portable_1.4.6.14_x64_Full.zip').Path
+$zip = (Resolve-Path 'build\release\F6Launcher_Portable_1.4.8_x64_Full.zip').Path
 Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $archive = [System.IO.Compression.ZipFile]::OpenRead($zip)
@@ -81,9 +81,18 @@ Get-Item -LiteralPath $zip | Select-Object FullName, Length, LastWriteTime
 Get-FileHash -LiteralPath $zip -Algorithm SHA256
 ```
 
-只有脚本成功退出、条目完整读取无异常，并记录了实际输出的文件大小和 SHA256，才能报告 Full 包构建与 ZIP 校验完成。构建成功不代表已上传、部署或通过真实游戏运行测试。
+只有脚本成功退出、条目完整读取无异常，并记录了实际输出的文件大小和 SHA256，才能报告 Full 包构建与 ZIP 校验完成。根目录和应用目录必须原样附带 `LICENSE`、`Starward_LICENSE`、`NOTICE.md`，主入口是 `F6Launcher.exe`；打包门禁检查可执行文件产品名和独立图标。可再运行 `scripts/verify-fork-distribution.py` 检查实际 ZIP。构建成功不代表已上传、部署或通过真实游戏运行测试。
 
 ## 历史工作区记录
+
+### 1.4.7 Full（2026-11-03）
+
+- 入口：`package-full.ps1 -Version 1.4.7 -Architecture x64 -Configuration Release -ShadeSource 'D:\APPS\test\TEST\HoYoShadeHub_Portable_1.4.5.0_x64_Full\HoYoShade' -DisabledAddons ''`；复用用户 .NET 10 SDK，实际成功退出。
+- 输出：`build/release/HoYoShadeHub_Portable_1.4.7_x64_Full.zip`，339386193 字节，2012 个条目，SHA256 `AE28D3DEEC34C363FF7FE2243687A2F9F1109919CB0052D6FDDEC146101CAA00`。
+- ZIP 逐文件与暂存源 SHA256 一致，额外 CRC、必要结构、相对路径和用户状态排除检查通过。Full 内 922 个程序文件与此前已回归验证的 1.4.7 普通包逐文件一致；框架主 DLL 与来源一致。
+- 框架包含 730 个滤镜、161 个材质，插件和截图目录留空。Full 不捆绑 F5/F6 Opt 或大型 NR DLL；升级 1.4.7 后可直接导入 F5 Final，无需旧 app-1.4.6.12 增量。
+- 首次 1.4.7 发布误用 `package.ps1` 仅生成普通包，此次由正式 Full 入口补齐。普通包保留在远端，供现有启动器的更新文件名匹配使用；新安装推荐 Full。
+- 构建日志 `artifacts/package-full-1.4.7-20261103.log`，校验回执 `<Full.zip>.verification.json`。本轮暂存已由脚本清理，没有覆盖本机 test，也未启动启动器或游戏。
 
 截至 2026-10-20，`package-full.ps1` 已支持 `-ReleaseDirectory`。版本 `1.4.6.13` Full ZIP 已由脚本构建并校验，输出位于 `build/release/HoYoShadeHub_Portable_1.4.6.13_x64_Full.zip`，大小 `339315491` 字节、2000 个条目，SHA256 为 `A39C449E7DD8B0799ACEED2AA94B60DE4BCD4275D71A2E2E38401B8749C1F60B`。该构建已解压部署到 Downloads 下同名目录；没有进行真实游戏运行测试。
 

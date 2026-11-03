@@ -1,7 +1,5 @@
-using Grpc.Core;
 using Microsoft.Extensions.Logging;
 using NuGet.Versioning;
-using HoYoShadeHub.Features.RPC;
 using HoYoShadeHub.RPC.Update;
 using HoYoShadeHub.RPC.Update.Metadata;
 using System;
@@ -17,15 +15,13 @@ internal class UpdateService
 
     private readonly ILogger<UpdateService> _logger;
 
-    private readonly RpcService _rpcService;
 
     private readonly MetadataClient _metadataClient;
 
 
-    public UpdateService(ILogger<UpdateService> logger, RpcService rpcService, MetadataClient metadataClient)
+    public UpdateService(ILogger<UpdateService> logger, MetadataClient metadataClient)
     {
         _logger = logger;
-        _rpcService = rpcService;
         _metadataClient = metadataClient;
     }
 
@@ -34,10 +30,7 @@ internal class UpdateService
     public async Task<ReleaseInfoDetail?> CheckUpdateAsync(bool disableIgnore = false, string? proxyUrl = null)
     {
         // Set proxy URL on MetadataClient if provided
-        if (proxyUrl != null)
-        {
-            _metadataClient.SetProxyUrl(proxyUrl);
-        }
+        _metadataClient.SetProxyUrl(proxyUrl);
         
         _ = NuGetVersion.TryParse(AppConfig.AppVersion, out var currentVersion);
         _ = NuGetVersion.TryParse(AppConfig.IgnoreVersion, out var ignoreVersion);
@@ -103,7 +96,18 @@ internal class UpdateService
                 State = UpdateState.NotSupport;
                 return;
             }
-            await StartInternalAsync(release, proxyUrl, _cancellationTokenSource.Token);
+            // All launcher entry points use the same fork-owned portable channel.
+            // The upstream RPC diff backend is not a service for this product.
+            var updater = new GithubUpdateService();
+            State = UpdateState.Downloading;
+            var progress = new Progress<HoYoShadeHub.Extensions.Services.DownloadProgress>(p =>
+            {
+                Progress_TotalBytes = p.TotalBytes ?? 0;
+                Progress_DownloadBytes = p.BytesReceived;
+            });
+            string archive = await updater.DownloadAsync("v" + release.Version.TrimStart('v', 'V'), progress, _cancellationTokenSource.Token);
+            await updater.ApplyAsync(archive, _cancellationTokenSource.Token);
+            State = UpdateState.Finish;
             if (State is UpdateState.Finish)
             {
                 UpdateFinished = true;
@@ -126,48 +130,6 @@ internal class UpdateService
         }
     }
 
-
-
-
-    private async Task StartInternalAsync(ReleaseInfoDetail release, string? proxyUrl, CancellationToken cancellationToken = default)
-    {
-        try
-        {
-            if (!await _rpcService.EnsureRpcServerRunningAsync())
-            {
-                // 操作取消
-                State = UpdateState.Stop;
-                _logger.LogWarning("Start rpc server cancelled.");
-                return;
-            }
-            var client = RpcService.CreateRpcClient<Updater.UpdaterClient>();
-            var request = new UpdateRequest
-            {
-                Version = release.Version,
-                Architecture = (int)release.Architecture,
-                InstallType = (int)release.InstallType,
-                TargetPath = Path.GetDirectoryName(AppConfig.HoYoShadeHubLauncherExecutePath),
-                CurrentVersion = AppConfig.AppVersion,
-                ProxyUrl = proxyUrl ?? string.Empty
-            };
-            using var call = client.Update(request, cancellationToken: cancellationToken);
-            await foreach (UpdateProgress progress in call.ResponseStream.ReadAllAsync(cancellationToken))
-            {
-                State = (UpdateState)progress.State;
-                Progress_TotalFileCount = progress.TotalFile;
-                Progress_DownloadFileCount = progress.DownloadFile;
-                Progress_TotalBytes = progress.TotalBytes;
-                Progress_DownloadBytes = progress.DownloadBytes;
-                ErrorMessage = progress.ErrorMessage;
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Start update internal");
-            State = UpdateState.Error;
-            ErrorMessage = ex.Message;
-        }
-    }
 
 
 

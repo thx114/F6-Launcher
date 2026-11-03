@@ -72,7 +72,7 @@ public class UninstallWindow : WindowBase
             new TextBlock().FontWeight(FontWeight.Bold)
                            .FontSize(24)
                            .Foreground(Theme.Palette.Accent)
-                           .Text("HoYoShade Hub"),
+                           .Text("F6 Launcher"),
             new TextBlock().FontSize(13)
                            .Foreground(Theme.Palette.DisabledAccent)
                            .Text(Lang.GameLauncherForMiHoYo));
@@ -356,12 +356,12 @@ public class UninstallWindow : WindowBase
 
     private static void ClearShortcut()
     {
-        string lnk = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Desktop), "HoYoShade Hub.lnk");
+        string lnk = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Desktop), "F6 Launcher.lnk");
         if (File.Exists(lnk))
         {
             File.Delete(lnk);
         }
-        string folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), "HoYoShade Hub");
+        string folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), "F6 Launcher");
         if (Directory.Exists(folder))
         {
             Directory.Delete(folder, true);

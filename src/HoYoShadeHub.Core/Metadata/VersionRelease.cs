@@ -42,7 +42,7 @@ public class ReleaseVersion : IJsonOnDeserialized
 
 
     [JsonIgnore]
-    public string ReleasePage => $"https://github.com/DuolaD/HoYoShade-Hub/releases/tag/{Version}";
+    public string ReleasePage => $"https://github.com/thx114/HoYoShadeHub-DLSS5/releases/tag/v{Version.TrimStart('v', 'V')}";
 
 
     public void OnDeserialized()
@@ -52,11 +52,7 @@ public class ReleaseVersion : IJsonOnDeserialized
             string prefix;
             if (string.IsNullOrWhiteSpace(SeparatePrefix))
             {
-#if DEV
-                prefix = $"https://cdn.cf.storage.hub.hoyosha.de/release/separate_files/dev/";
-#else
-                prefix = $"https://cdn.cf.storage.hub.hoyosha.de/release/separate_files/";
-#endif
+                throw new InvalidOperationException("F6 metadata must provide an explicit SeparatePrefix; use the fork portable updater.");
             }
             else
             {
@@ -66,7 +62,7 @@ public class ReleaseVersion : IJsonOnDeserialized
             {
                 if (string.IsNullOrWhiteSpace(file.Url))
                 {
-                    file.Url = Path.Combine(prefix, file.Hash);
+                    file.Url = new Uri(new Uri(prefix.TrimEnd('/') + "/"), file.Hash).AbsoluteUri;
                 }
             }
 

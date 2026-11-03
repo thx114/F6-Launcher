@@ -1,6 +1,8 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
+		<Product>F6 Launcher Setup</Product>
+		<Company>thx114</Company>
 		<OutputType>WinExe</OutputType>
 		<TargetFramework>net10.0-windows</TargetFramework>
 		<ImplicitUsings>enable</ImplicitUsings>
@@ -17,6 +19,7 @@
 	</PropertyGroup>
 
 	<ItemGroup>
+		<Compile Include="..\HoYoShadeHub.Core\Networking\ForkNetworkPolicy.cs" Link="Core\ForkNetworkPolicy.cs" />
 		<PackageReference Include="Aprillz.MewUI" Version="0.15.2" />
 		<PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="10.0.9" />
 		<PackageReference Include="Microsoft.Extensions.Configuration.CommandLine" Version="10.0.9" />

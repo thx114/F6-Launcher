@@ -42,7 +42,7 @@ public sealed partial class ImageViewWindow : WindowEx
 
     private void InitializeWindow()
     {
-        Title = "HoYoShadeHub Screenshots Viewer";
+        Title = "F6 Launcher Screenshots Viewer";
         AppWindow.TitleBar.ExtendsContentIntoTitleBar = true;
         AppWindow.TitleBar.IconShowOptions = IconShowOptions.ShowIconAndSystemMenu;
         AppWindow.TitleBar.PreferredHeightOption = TitleBarHeightOption.Tall;

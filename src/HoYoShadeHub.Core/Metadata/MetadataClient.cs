@@ -12,14 +12,12 @@ public class MetadataClient
 {
 
 
-    private const string API_PREFIX_CLOUDFLARE = "https://cdn.autumn.recipe.2dcd.cf.storage.hub.hoyosha.de/https://raw.githubusercontent.com/DuolaD/HoYoShade-Hub/metadata";
+    private const string API_PREFIX_GITHUB = "https://raw.githubusercontent.com/thx114/HoYoShadeHub-DLSS5/main/metadata";
 
-    private const string API_PREFIX_GITHUB = "https://raw.githubusercontent.com/DuolaD/HoYoShade-Hub/metadata";
-
-    private const string API_PREFIX_JSDELIVR = "https://cdn.jsdelivr.net/gh/DuolaD/HoYoShade-Hub@metadata";
+    private const string API_PREFIX_JSDELIVR = "https://cdn.jsdelivr.net/gh/thx114/HoYoShadeHub-DLSS5@main/metadata";
 
 
-    private string API_PREFIX = API_PREFIX_CLOUDFLARE;
+    private string API_PREFIX = API_PREFIX_GITHUB;
 
 #if DEV
     private const string API_VERSION = "dev";
@@ -35,6 +33,8 @@ public class MetadataClient
     {
         SetApiPrefix(apiIndex);
         _httpClient = httpClient ?? new HttpClient(DohService.CreateSocketsHttpHandler()) { DefaultVersionPolicy = HttpVersionPolicy.RequestVersionOrHigher };
+        if (!_httpClient.DefaultRequestHeaders.UserAgent.Any())
+            _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("F6Launcher-Metadata");
     }
 
 
@@ -45,7 +45,7 @@ public class MetadataClient
         {
             1 => API_PREFIX_GITHUB,
             2 => API_PREFIX_JSDELIVR,
-            _ => API_PREFIX_CLOUDFLARE,
+            _ => API_PREFIX_GITHUB,
         };
     }
 
@@ -53,6 +53,7 @@ public class MetadataClient
 
     private async Task<T> CommonGetAsync<T>(string url, CancellationToken cancellationToken = default) where T : class
     {
+        ForkNetworkPolicy.EnsureAllowed(url);
         var res = await _httpClient.GetFromJsonAsync(url, typeof(T), MetadataJsonContext.Default, cancellationToken) as T;
         if (res == null)
         {
@@ -69,7 +70,7 @@ public class MetadataClient
 
     private string GetUrl(string suffix)
     {
-        return $"{API_PREFIX}/{API_VERSION}/{suffix}";
+        return $"{API_PREFIX.TrimEnd('/')}/{API_VERSION}/{suffix}";
     }
 
 
@@ -120,7 +121,7 @@ public class MetadataClient
 
     public async Task<GithubRelease?> GetGithubLatestReleaseAsync(CancellationToken cancellationToken = default)
     {
-        const string url = "https://api.github.com/repos/DuolaD/HoYoShade-Hub/releases?page=1&per_page=1";
+        const string url = "https://api.github.com/repos/thx114/HoYoShadeHub-DLSS5/releases?page=1&per_page=1";
         var list = await CommonGetAsync<List<GithubRelease>>(url, cancellationToken);
         return list?.FirstOrDefault();
     }
@@ -129,7 +130,7 @@ public class MetadataClient
 
     public async Task<List<GithubRelease>> GetGithubReleaseAsync(int page, int perPage, CancellationToken cancellationToken = default)
     {
-        string url = $"https://api.github.com/repos/DuolaD/HoYoShade-Hub/releases?page={page}&per_page={perPage}";
+        string url = $"https://api.github.com/repos/thx114/HoYoShadeHub-DLSS5/releases?page={page}&per_page={perPage}";
         var list = await CommonGetAsync<List<GithubRelease>>(url, cancellationToken);
         return list ?? new List<GithubRelease>();
     }
@@ -138,7 +139,7 @@ public class MetadataClient
 
     public async Task<GithubRelease?> GetGithubReleaseAsync(string tag, CancellationToken cancellationToken = default)
     {
-        string url = $"https://api.github.com/repos/DuolaD/HoYoShade-Hub/releases/tags/{tag}";
+        string url = $"https://api.github.com/repos/thx114/HoYoShadeHub-DLSS5/releases/tags/{tag}";
         return await CommonGetAsync<GithubRelease>(url, cancellationToken);
     }
 
@@ -150,7 +151,7 @@ public class MetadataClient
         {
             Text = markdown,
             Mode = "gfm",
-            Context = "DuolaD/HoYoShade-Hub",
+            Context = "thx114/HoYoShadeHub-DLSS5",
         };
         var content = new StringContent(JsonSerializer.Serialize(request, typeof(GithubMarkdownRequest), MetadataJsonContext.Default), new MediaTypeHeaderValue("application/json"));
         var response = await _httpClient.PostAsync(url, content, cancellationToken);

@@ -77,13 +77,13 @@ internal static class Program
             if (targetExe is null)
             {
                 int answer = MessageBoxW(IntPtr.Zero,
-                    "HoYoShade Hub files not found.\r\nWould you like to download it now?\r\nhttps://github.com/DuolaD/HoYoShade-Hub",
-                    "HoYoShade Hub",
+                    "F6 Launcher files not found.\r\nWould you like to download it now?\r\nhttps://github.com/thx114/HoYoShadeHub-DLSS5",
+                    "F6 Launcher",
                     MB_ICONWARNING | MB_OKCANCEL);
 
                 if (answer == IDOK)
                 {
-                    ShellExecuteW(IntPtr.Zero, null, "https://github.com/DuolaD/HoYoShade-Hub", null, null, 1);
+                    ShellExecuteW(IntPtr.Zero, null, "https://github.com/thx114/HoYoShadeHub-DLSS5", null, null, 1);
                 }
 
                 return 1;

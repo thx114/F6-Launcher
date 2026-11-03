@@ -7,35 +7,25 @@ using System.Threading.Tasks;
 
 namespace HoYoShadeHub.Features.Plugins;
 
-/// <summary>
-/// Bridges HoYoShade Hub's download-server setting into the extensions download stack.
-///
-/// Why this exists: <see cref="HysxHttp.ProxyUrl"/> was read by every plugin download but
-/// <b>never assigned anywhere</b> -- so plugin downloads silently bypassed the proxy and always
-/// hit GitHub directly, even when the user had picked Cloudflare/Tencent/Alibaba in settings.
-/// This class is the missing assignment.
-///
-/// Hub's convention for the setting:
-/// <c>-1 = Auto, 0 = GitHub direct, 1 = Cloudflare, 2 = Tencent, 3 = Alibaba</c>.
-/// </summary>
+/// <summary>将统一下载设置应用到扩展栈；仅使用直连与独立公共 GitHub 代理。</summary>
 public static class PluginDownloadProxy
 {
     /// <summary>
     /// 用户选「自动选择」时先用的那个（还没测速完 / 测速全失败时兜底）。
     /// 真正的自动选择见 <see cref="ApplyAutoAsync"/>。
     /// </summary>
-    private const int AutoFallbackServer = 1;
+    private const int AutoFallbackServer = 0;
 
     /// <summary>
-    /// 自动选择时逐个测速的顺序（0 = GitHub 直连放最后兜底）。
+    /// 自动选择时逐个测速的顺序（0 = GitHub 直连优先）。
     /// 4 / 5 = gh-proxy.org、ghfast.top，是仅有的两个能转发 raw 域名的公共代理。
     /// </summary>
-    private static readonly int[] AutoCandidates = [4, 5, 1, 2, 3, 0];
+    private static readonly int[] AutoCandidates = [0, 4, 5];
 
     /// <summary>本次会话内自动选过一次就记住，不用每次进页面都测速</summary>
     private static int? _autoPickedServer;
 
-    /// <summary>测速结果的说明（界面上显示「自动选择（腾讯云 123ms）」用）</summary>
+    /// <summary>测速结果的说明（界面上显示「自动选择（GitHub 直连 123ms）」用）</summary>
     public static string? AutoPickReason { get; private set; }
 
     /// <summary>Resolved prefix currently applied to plugin downloads; null means GitHub direct.</summary>
@@ -51,9 +41,6 @@ public static class PluginDownloadProxy
     {
         -1 => "自动选择",
         0 => "GitHub 直连",
-        1 => IsProxied ? "Cloudflare" : "Cloudflare（代理未生效，走直连）",
-        2 => IsProxied ? "腾讯云" : "腾讯云（代理未生效，走直连）",
-        3 => IsProxied ? "阿里云" : "阿里云（代理未生效，走直连）",
         4 => IsProxied ? "gh-proxy.org" : "gh-proxy.org（代理未生效，走直连）",
         5 => IsProxied ? "ghfast.top" : "ghfast.top（代理未生效，走直连）",
         _ => "GitHub 直连",
@@ -67,6 +54,7 @@ public static class PluginDownloadProxy
 
     public static void Apply(int serverIndex)
     {
+        serverIndex = serverIndex is 1 or 2 or 3 ? 0 : serverIndex;
         CurrentServerIndex = serverIndex;
 
         int effective = serverIndex;
@@ -153,14 +141,7 @@ public static class PluginDownloadProxy
     }
 
     /// <summary>服务器序号 → 显示名（给测速结果文案用）</summary>
-    private static string DescribeServer(int serverIndex) => serverIndex switch
-    {
-        0 => "GitHub 直连",
-        1 => "Cloudflare",
-        2 => "腾讯云",
-        3 => "阿里云",
-        _ => "默认线路",
-    };
+    private static string DescribeServer(int serverIndex) => DownloadServerCatalog.Describe(serverIndex);
 
     /// <summary>忘掉本次会话的自动选择结果（设置里改了服务器时调）</summary>
     public static void ResetAutoPick()

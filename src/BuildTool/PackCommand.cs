@@ -79,7 +79,7 @@ public class PackCommand
             Architecture = arch,
             InstallType = type,
             DiffVersion = null,
-            UrlPrefix = "https://cdn.cf.storage.hub.hoyosha.de/release/file/",
+            UrlPrefix = $"{ReleaseEndpoints.BaseUrl}/file/",
             Files = new(),
         };
 

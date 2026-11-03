@@ -40,8 +40,8 @@ public sealed class GithubVersionInfo
 /// **本 fork 自己的更新渠道**：直接从 GitHub Release 装便携包，也能装旧版本（= 退回）。
 ///
 /// <para>
-/// 官方渠道走 RPC 元数据（<see cref="UpdateService"/>）；这里走我们仓库的 Release。
-/// 资产固定叫 <c>HoYoShadeHub_Portable_&lt;版本&gt;_x64.zip</c>，解析复用 Extensions 里现成的
+/// 版本提示使用本分支元数据（<see cref="UpdateService"/>）；安装内容来自本分支的 Release。
+/// 资产固定叫 <c>F6Launcher_Portable_&lt;版本&gt;_x64.zip</c>，解析复用 Extensions 里现成的
 /// <see cref="GithubReleaseResolver"/>（releases.atom + expanded_assets HTML，不吃 API 限额）。
 /// </para>
 ///
@@ -56,7 +56,7 @@ internal sealed class GithubUpdateService
     /// <summary>本 fork 的仓库</summary>
     public const string Repository = "thx114/HoYoShadeHub-DLSS5";
 
-    private const string AssetPattern = "HoYoShadeHub_Portable_*_x64.zip";
+    private const string AssetPattern = "F6Launcher_Portable_*_x64.zip";
 
     private readonly ILogger<GithubUpdateService> _logger = AppConfig.GetLogger<GithubUpdateService>();
 
@@ -95,6 +95,8 @@ internal sealed class GithubUpdateService
         {
             string normalized = NormalizeVersion(version.Tag);
             _ = NuGetVersion.TryParse(normalized, out NuGetVersion? parsed);
+            // Only releases with independent branding, licenses and service policy.
+            if (parsed is null || parsed < new NuGetVersion(1, 4, 8)) continue;
 
             string note = "比当前旧";
             if (parsed is null || current is null)

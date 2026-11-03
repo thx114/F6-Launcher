@@ -20,7 +20,7 @@ public class MetadataClient
 
 
 
-    private string API_PREFIX = "https://cdn.cf.storage.hub.hoyosha.de/release";
+    private string API_PREFIX = "https://raw.githubusercontent.com/thx114/HoYoShadeHub-DLSS5/main/metadata/";
     
     private string? _proxyUrl;
 
@@ -37,7 +37,7 @@ public class MetadataClient
             {
                 DefaultVersionPolicy = HttpVersionPolicy.RequestVersionOrHigher
             };
-            _httpClient.DefaultRequestHeaders.Add("User-Agent", "HoYoShadeHub.RPC");
+            _httpClient.DefaultRequestHeaders.Add("User-Agent", "F6Launcher.RPC");
         }
         else
         {
@@ -51,6 +51,7 @@ public class MetadataClient
     /// <param name="proxyUrl">Proxy URL prefix, or null to use Cloudflare direct</param>
     public void SetProxyUrl(string? proxyUrl)
     {
+        HoYoShadeHub.Core.Networking.ForkNetworkPolicy.EnsureAllowed(proxyUrl);
         _proxyUrl = proxyUrl;
     }
 
@@ -59,6 +60,7 @@ public class MetadataClient
 
     private async Task<T> CommonGetAsync<T>(string url, CancellationToken cancellationToken = default) where T : class
     {
+        HoYoShadeHub.Core.Networking.ForkNetworkPolicy.EnsureAllowed(url);
         T? res = await _httpClient.GetFromJsonAsync(url, typeof(T), MetadataJsonContext.Default, cancellationToken) as T;
         if (res is null)
         {
@@ -75,7 +77,7 @@ public class MetadataClient
 
     private string GetUrl(string suffix)
     {
-        string baseUrl = $"{API_PREFIX}/{suffix}";
+        string baseUrl = $"{API_PREFIX.TrimEnd('/')}/{suffix}";
         
         // If proxy is set, use it to proxy the Cloudflare API
         if (!string.IsNullOrWhiteSpace(_proxyUrl))
@@ -129,7 +131,7 @@ public class MetadataClient
     public async Task<ReleaseManifest> GetReleaseManifestAsync(string url, CancellationToken cancellationToken = default)
     {
         // Apply proxy if it's a URL to our CDN
-        if (!string.IsNullOrWhiteSpace(_proxyUrl) && url.Contains("cdn.cf.storage.hub.hoyosha.de"))
+        if (!string.IsNullOrWhiteSpace(_proxyUrl) && url.StartsWith(API_PREFIX, StringComparison.OrdinalIgnoreCase))
         {
             url = $"{_proxyUrl}/{url}";
         }
@@ -153,7 +155,7 @@ public class MetadataClient
 
     public async Task<GithubRelease?> GetGithubLatestReleaseAsync(CancellationToken cancellationToken = default)
     {
-        const string url = "https://api.github.com/repos/DuolaD/HoYoShade-Hub/releases?page=1&per_page=1";
+        const string url = "https://api.github.com/repos/thx114/HoYoShadeHub-DLSS5/releases?page=1&per_page=1";
         var list = await CommonGetAsync<List<GithubRelease>>(url, cancellationToken);
         return list?.FirstOrDefault();
     }
@@ -162,7 +164,7 @@ public class MetadataClient
 
     public async Task<List<GithubRelease>> GetGithubReleaseAsync(int page, int perPage, CancellationToken cancellationToken = default)
     {
-        string url = $"https://api.github.com/repos/DuolaD/HoYoShade-Hub/releases?page={page}&per_page={perPage}";
+        string url = $"https://api.github.com/repos/thx114/HoYoShadeHub-DLSS5/releases?page={page}&per_page={perPage}";
         var list = await CommonGetAsync<List<GithubRelease>>(url, cancellationToken);
         return list ?? new List<GithubRelease>();
     }
@@ -171,7 +173,7 @@ public class MetadataClient
 
     public async Task<GithubRelease?> GetGithubReleaseAsync(string tag, CancellationToken cancellationToken = default)
     {
-        string url = $"https://api.github.com/repos/DuolaD/HoYoShade-Hub/releases/tags/{tag}";
+        string url = $"https://api.github.com/repos/thx114/HoYoShadeHub-DLSS5/releases/tags/{tag}";
         return await CommonGetAsync<GithubRelease>(url, cancellationToken);
     }
 
@@ -183,7 +185,7 @@ public class MetadataClient
         {
             Text = markdown,
             Mode = "gfm",
-            Context = "DuolaD/HoYoShade-Hub",
+            Context = "thx114/HoYoShadeHub-DLSS5",
         };
         var content = new StringContent(JsonSerializer.Serialize(request, typeof(GithubMarkdownRequest), MetadataJsonContext.Default), new MediaTypeHeaderValue("application/json"));
         var response = await _httpClient.PostAsync(url, content, cancellationToken);

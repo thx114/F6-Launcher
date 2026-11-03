@@ -20,7 +20,7 @@ namespace HoYoShadeHub.Extensions.Services;
 /// <item>路径相对 ReShade DLL 所在目录（即 HoYoShade 根目录）；</item>
 /// <item>不递归 —— addon 必须直接躺在该目录里，不能是子目录。</item>
 /// </list>
-/// HoYoShade Hub 会把 addon 放进 <c>reshade-shaders\Addons</c>，但从不写这个键，
+/// F6 Launcher 会把 addon 放进 <c>reshade-shaders\Addons</c>，但从不写这个键，
 /// 而 ini 缺失时 ReShade 只扫 HoYoShade 根目录，所以那些 addon 不会生效。
 /// </summary>
 public static class ReShadeIniService

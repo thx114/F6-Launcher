@@ -238,7 +238,7 @@ internal static class OptiScalerPresetCatalog
                     : CloudProxyManager.ApplyProxy(url, proxy);
 
                 using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
-                client.DefaultRequestHeaders.UserAgent.ParseAdd("HoYoShadeHub");
+                client.DefaultRequestHeaders.UserAgent.ParseAdd("F6Launcher");
                 return await client.GetStringAsync(target, cancellationToken);
             }
             catch

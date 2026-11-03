@@ -58,6 +58,7 @@ public sealed partial class MainWindow : WindowEx
         _viewTransitions = new(CurrentContentPresenter, NextContentPresenter, SetWizardBackgroundVisibility);
         Closed += (_, _) =>
         {
+            _windowClosed = true;
             _viewTransitions.Dispose();
             WeakReferenceMessenger.Default.UnregisterAll(this);
         };
@@ -77,7 +78,7 @@ public sealed partial class MainWindow : WindowEx
 
     private void InitializeMainWindow()
     {
-        Title = "HoYoShade Hub";
+        Title = "F6 Launcher · 非官方分支 / Unofficial fork";
         AppWindow.TitleBar.ExtendsContentIntoTitleBar = true;
         AppWindow.TitleBar.IconShowOptions = IconShowOptions.ShowIconAndSystemMenu;
         AppWindow.TitleBar.PreferredHeightOption = TitleBarHeightOption.Tall;
@@ -397,7 +398,8 @@ public sealed partial class MainWindow : WindowEx
     {
         base.Hide();
         WeakReferenceMessenger.Default.Send(new MainWindowStateChangedMessage { Hide = true, CurrentTime = DateTimeOffset.Now });
-        GC.Collect();
+        // Hiding is a UI operation. Let the runtime schedule collection instead of
+        // forcing a blocking full collection while the window is changing state.
     }
 
 
@@ -419,13 +421,7 @@ public sealed partial class MainWindow : WindowEx
                 // 那样左上角那排游戏图标就点不动了（要重启才能好）
                 UpdateDragRectangles();
 
-                WeakReferenceMessenger.Default.Send(new MainWindowStateChangedMessage
-                {
-                    Activate = true,
-                    CurrentTime = now,
-                    LastActivatedTime = _lastActivatedTime,
-                });
-                _lastActivatedTime = now;
+                QueueActivationRefresh(now);
             }
         }
         else if (uMsg == (uint)User32.WindowMessage.WM_SYSCOMMAND)

@@ -1,0 +1,17 @@
+{
+  "version": "1.4.8",
+  "releases": {
+    "x64-portable": {
+      "version": "1.4.8",
+      "architecture": "X64",
+      "install_type": "Portable",
+      "build_time": "2026-11-03T17:08:48.112381+00:00",
+      "disable_auto_update": false,
+      "package_url": "https://github.com/thx114/HoYoShadeHub-DLSS5/releases/download/v1.4.8/F6Launcher_Portable_1.4.8_x64.zip",
+      "package_size": 195520239,
+      "package_hash": "7e1cc0b8faed6d42e428f060734920bba8c2b5434ca07d89ef61ced7addec515",
+      "manifest_url": "",
+      "diffs": {}
+    }
+  }
+}

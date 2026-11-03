@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging;
 using Microsoft.Win32;
 using HoYoShadeHub.Core;
 using HoYoShadeHub.Core.HoYoPlay;
@@ -37,17 +37,17 @@ internal class UrlProtocolService
         string command = $"""
             "{exe}" "%1"
             """;
-        Registry.SetValue(@"HKEY_CURRENT_USER\Software\Classes\HoYoShadeHub", "", "URL:HoYoShadeHub Protocol");
-        Registry.SetValue(@"HKEY_CURRENT_USER\Software\Classes\HoYoShadeHub", "URL Protocol", "");
-        Registry.SetValue(@"HKEY_CURRENT_USER\Software\Classes\HoYoShadeHub\DefaultIcon", "", "HoYoShadeHub.exe,1");
-        Registry.SetValue(@"HKEY_CURRENT_USER\Software\Classes\HoYoShadeHub\Shell\Open\Command", "", command);
+        Registry.SetValue(@"HKEY_CURRENT_USER\Software\Classes\F6Launcher", "", "URL:F6Launcher Protocol");
+        Registry.SetValue(@"HKEY_CURRENT_USER\Software\Classes\F6Launcher", "URL Protocol", "");
+        Registry.SetValue(@"HKEY_CURRENT_USER\Software\Classes\F6Launcher\DefaultIcon", "", "HoYoShadeHub.exe,1");
+        Registry.SetValue(@"HKEY_CURRENT_USER\Software\Classes\F6Launcher\Shell\Open\Command", "", command);
     }
 
 
 
     public static void UnregisterProtocol()
     {
-        Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\HoYoShadeHub", false);
+        Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\F6Launcher", false);
     }
 
 
@@ -112,7 +112,7 @@ internal class UrlProtocolService
         catch (Exception ex)
         {
             log.LogError(ex, "Handle url protocol");
-            User32.MessageBox(HWND.NULL, ex.Message, "HoYoShadeHub", ProtocolBoxFlags | User32.MB_FLAGS.MB_ICONERROR);
+            User32.MessageBox(HWND.NULL, ex.Message, "F6 Launcher", ProtocolBoxFlags | User32.MB_FLAGS.MB_ICONERROR);
             return true;
         }
         return false;
@@ -146,7 +146,7 @@ internal class UrlProtocolService
             request.Replace
                 ? $"模组「{request.ModName}」已更新，旧版本已备份到 Mods\\_backup。"
                 : $"模组「{request.ModName}」已安装到对应游戏的 Mods 目录。",
-            "HoYoShadeHub",
+            "F6 Launcher",
             ProtocolBoxFlags | User32.MB_FLAGS.MB_ICONINFORMATION);
     }
 }

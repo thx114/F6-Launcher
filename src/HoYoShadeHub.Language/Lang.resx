@@ -121,7 +121,7 @@
     <value>Chinese</value>
   </data>
   <data name="UpdateWindow_Title" xml:space="preserve">
-    <value>HoYoShadeHub - Update</value>
+    <value>F6 Launcher - Update</value>
   </data>
   <data name="UpdateWindow_ReleaseTime" xml:space="preserve">
     <value>Published Time:</value>
@@ -493,7 +493,7 @@
     <value>URL Protocol</value>
   </data>
 	<data name="SettingPage_URLProtocolDesc" xml:space="preserve">
-    <value>Other software can use some of HoYoShade Hub's features through the URL protocol.</value>
+    <value>Other software can use some of F6 Launcher's features through the URL protocol.</value>
   </data>
 	<data name="SettingPage_RegisterURLProtocol" xml:space="preserve">
     <value>Register URL Protocol</value>
@@ -559,7 +559,7 @@
     <value>After Starting Game</value>
   </data>
 	<data name="AppearanceSettingPage_HelpUsTranslateHoYoShadeHub" xml:space="preserve">
-    <value>Help us translate HoYoShade Hub</value>
+    <value>Help us translate F6 Launcher</value>
   </data>
 	<data name="FileSettingPage_Cache" xml:space="preserve">
     <value>Cache</value>
@@ -723,7 +723,7 @@
     <value>Cannot Connect RPC Service</value>
   </data>
 	<data name="WelcomeView_DearPlayerWelcomeToHoYoShadeHub" xml:space="preserve">
-    <value>Dear Player, welcome to HoYoShade Hub!</value>
+    <value>Dear Player, welcome to F6 Launcher!</value>
   </data>
 	<data name="WelcomeView_WelcomeToHoYoShadeHubDescription" xml:space="preserve">
     <value>This is a GUI launcher designed specifically for HoYoShade, helping you easily install and manage it and enjoy a better experience.</value>
@@ -756,7 +756,7 @@
     <value>Installed</value>
   </data>
 	<data name="WelcomeView_HoYoShadeHubStart" xml:space="preserve">
-    <value>HoYoShade Hub, Start!</value>
+    <value>F6 Launcher, Start!</value>
   </data>
 	<data name="GameSelector_ClickToSelectOrSwitchGame" xml:space="preserve">
     <value>Click to select or switch game.</value>
@@ -816,7 +816,7 @@
     <value>High Dynamic Range</value>
   </data>
 	<data name="WelcomeView_IfHoYoShadeHubTakesALongTimeToStartItIsRecommendedToDisableSmartAppControlInWindowsSecurity" xml:space="preserve">
-    <value>If HoYoShade Hub takes a long time to start, it is recommended to disable Smart App Control in Windows Security.</value>
+    <value>If F6 Launcher takes a long time to start, it is recommended to disable Smart App Control in Windows Security.</value>
   </data>
 	<data name="WelcomeView_OpenWindowsSecurity" xml:space="preserve">
     <value>Open Windows Security</value>
@@ -825,7 +825,7 @@
     <value>Learn More</value>
   </data>
 	<data name="WelcomeView_NetworkErrorYouCanContinueUsingHoYoShadeHubButYouWonTReceiveFutureUpdates" xml:space="preserve">
-    <value>Network error. You can continue using HoYoShade Hub, but you won't receive future updates.</value>
+    <value>Network error. You can continue using F6 Launcher, but you won't receive future updates.</value>
   </data>
 	<data name="MainView_CheckSystemProxy_SystemProxyIsEnabled" xml:space="preserve">
     <value>System proxy is enabled.</value>
@@ -978,7 +978,7 @@
     <value>Failed to register the shortcut keys.</value>
   </data>
 	<data name="HotkeySetting_SingleKeyShortcutsTips" xml:space="preserve">
-    <value>If you register single-key shortcuts (F1-12), you need to run HoYoShade Hub with administrator privileges; otherwise, the shortcuts may not work in the game.</value>
+    <value>If you register single-key shortcuts (F1-12), you need to run F6 Launcher with administrator privileges; otherwise, the shortcuts may not work in the game.</value>
   </data>
 	<data name="SettingPage_KeyboardShortcuts" xml:space="preserve">
     <value>Keyboard Shortcuts</value>
@@ -1539,7 +1539,7 @@ Do you want to continue with the reset operation?</value>
     <value>Blender plugin injection process ({0}) is already running. Cannot launch Blender plugin or HoYoShade/OpenHoYoShade injector.</value>
   </data>
 	<data name="SettingPage_BlenderPluginRegionRestriction" xml:space="preserve">
-    <value>This plugin is only available in Mainland China/Hong Kong/Macau/Taiwan/Singapore. If you are not in the above countries and regions, the plugin developers/contributors and HoYoShade Hub developers/contributors reserve the right to refuse support.</value>
+    <value>This plugin is only available in Mainland China/Hong Kong/Macau/Taiwan/Singapore. If you are not in the above countries and regions, the plugin developers/contributors and F6 Launcher developers/contributors reserve the right to refuse support.</value>
   </data>
   <data name="SettingPage_CurrentRegion" xml:space="preserve">
     <value>Your current country/region is: {0}</value>
@@ -1560,7 +1560,7 @@ Do you want to continue with the reset operation?</value>
     <value>Starward Launcher Integration:</value>
   </data>
 	<data name="SettingPage_StarwardProtocolNotAvailableTip" xml:space="preserve">
-    <value>Please enable the "Register URL Protocol" switch in Starward Launcher's Settings - Advanced interface to allow HoYoShade Hub to connect.</value>
+    <value>Please enable the "Register URL Protocol" switch in Starward Launcher's Settings - Advanced interface to allow F6 Launcher to connect.</value>
   </data>
 	<data name="SettingPage_UseStarwardLauncherToStartGame" xml:space="preserve">
     <value>Use Starward Launcher to start public client games</value>

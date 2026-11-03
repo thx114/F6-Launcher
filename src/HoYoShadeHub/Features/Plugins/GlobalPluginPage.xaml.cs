@@ -80,6 +80,7 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
     /// 其它插件的「有新版本」就全没了。
     /// </summary>
     private readonly Dictionary<string, string> _updateTags = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, Task<List<ExtensionVersion>>> _versionRequests = new(StringComparer.Ordinal);
 
     /// <summary>这次会话已经弹过「版本更新引导」了没有（别每次刷新都弹）</summary>
     private static bool _migrationPrompted;
@@ -98,6 +99,10 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
 
     /// <summary>OptiScaler 来源的重叠层（打开页面时读一次，RefreshOptiScaler 复用）</summary>
     private List<OptiScalerSource>? _optiScalerOverlay;
+    private CancellationTokenSource? _pageLifetime;
+    private Task? _pageLoadTask;
+    private static Task? _automaticRouteTask;
+    private bool _catalogRefreshPending;
 
     public GlobalPluginPage()
     {
@@ -202,24 +207,56 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
         ModuleDownloadList.ItemsSource = AvailableModules;
 
 
-        // 下载服务器：用户选了「自动选择」就真去测速挑最快的（异步，不挡页面渲染）。
-        // 手动选了具体服务器的话 Apply() 直接生效，不用测。
-        if (AppConfig.HoYoShadeFrameworkDownloadServer == -1)
-        {
-            _ = ApplyAutoServerThenRefreshAsync();
-        }
-        else
+        _pageLifetime?.Cancel();
+        _pageLifetime?.Dispose();
+        _pageLifetime = new CancellationTokenSource();
+        if (AppConfig.HoYoShadeFrameworkDownloadServer != -1 || _automaticRouteTask is null)
         {
             PluginDownloadProxy.Apply();
-            _ = RefreshCatalogThenPageAsync();
+        }
+
+        // 本地列表先完成；测速和远端刷新都不能成为显示缓存的前置条件。
+        _pageLoadTask = LoadPageAsync(_pageLoadTask, _pageLifetime.Token);
+    }
+
+    private async Task LoadPageAsync(Task? previousLoad, CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (previousLoad is not null)
+            {
+                await previousLoad;
+            }
+            cancellationToken.ThrowIfCancellationRequested();
+            RemoteCatalogService.SeedFromBundle();
+            ModuleCatalogFile.Apply(RemoteCatalogService.ModulesCachePath);
+            RemoteCatalogService.ApplyConditions();
+            RemoteCatalogService.ApplyDllFingerprints();
+            _optiScalerOverlay = OptiScalerCatalog.LoadFile(RemoteCatalogService.OptiScalerCachePath);
+            await RefreshAsync(cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (AppConfig.HoYoShadeFrameworkDownloadServer == -1)
+            {
+                // 只合并进行中的测速；设置改变后仍让代理服务自己的缓存/失效规则生效。
+                if (_automaticRouteTask is null || _automaticRouteTask.IsCompleted)
+                    _automaticRouteTask = ApplyAutomaticRouteAsync();
+                await _automaticRouteTask.WaitAsync(cancellationToken);
+            }
+
+            await RefreshCatalogInBackgroundAsync(cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // 离页取消等待；共享目录拉取继续为其它页面填缓存。
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Load global plugin page");
         }
     }
 
-    /// <summary>
-    /// 「自动选择」下载服务器：先测速挑最快的，再刷新目录 / 列表。
-    /// 测速失败不该让页面刷不出来，所以整体包了 try/catch。
-    /// </summary>
-    private async Task ApplyAutoServerThenRefreshAsync()
+    private async Task ApplyAutomaticRouteAsync()
     {
         try
         {
@@ -240,31 +277,34 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
             _logger.LogWarning(ex, "Auto-select download server failed; falling back");
             PluginDownloadProxy.Apply();
         }
-
-        await RefreshCatalogThenPageAsync();
     }
-    /// <summary>进页面先看远端目录该不该更新（每天最多一次），再刷新列表。</summary>
-    private async Task RefreshCatalogThenPageAsync()
+    /// <summary>本地列表已经可用后刷新远端，只在内容更新时重读列表。</summary>
+    private async Task RefreshCatalogInBackgroundAsync(CancellationToken cancellationToken)
     {
         try
         {
-            RemoteCatalogResult result = await RemoteCatalogService.RefreshIfDueAsync();
-            if (result.Fetched)
+            RemoteCatalogResult result = await RemoteCatalogService.RefreshIfDueAsync(cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!result.Fetched)
             {
-                _logger.LogInformation("Remote catalog: {Message}", result.Message);
+                return;
             }
+
+            _logger.LogInformation("Remote catalog: {Message}", result.Message);
+            _optiScalerOverlay = OptiScalerCatalog.LoadFile(RemoteCatalogService.OptiScalerCachePath);
+            if (_isWorking)
+            {
+                // 安装/删除过程中不能重建正在操作的卡片，也不能把这次更新丢掉。
+                _catalogRefreshPending = true;
+                return;
+            }
+            await RefreshAsync(cancellationToken);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Refresh remote catalog");
         }
-
-        // 云端目录：模块（catalog/modules.json）和 OptiScaler（catalog/optiscaler.json）。
-        // 插件那边有它自己的 ExtraCatalogFiles 机制，这里不动。
-        ModuleCatalogFile.Apply(RemoteCatalogService.ModulesCachePath);
-        _optiScalerOverlay = OptiScalerCatalog.LoadFile(RemoteCatalogService.OptiScalerCachePath);
-
-        await RefreshAsync();
     }
 
     /// <summary>
@@ -417,6 +457,7 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
 
     protected override void OnUnloaded()
     {
+        _pageLifetime?.Cancel();
         ShellFileDrop.Unregister(_dropWindowHandle, this);
         _dropWindowHandle = 0;
 
@@ -458,15 +499,20 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
         }
 
         _updatesChecked = true;
+        ExtensionManagerService manager = _manager;
 
         foreach (PluginItemViewModel item in Items.Where(i => i.Installed is not null).ToList())
         {
             try
             {
-                string? tag = await _manager.CheckUpdateAsync(item.Manifest, default, force);
+                string? tag = await Task.Run(() => manager.CheckUpdateAsync(item.Manifest, default, force));
+                PluginItemViewModel? current = Items.FirstOrDefault(i =>
+                    string.Equals(i.Manifest.Id, item.Manifest.Id, StringComparison.OrdinalIgnoreCase));
+                if (current is null || !string.Equals(current.Installed?.ResolvedTag,
+                        item.Installed?.ResolvedTag, StringComparison.OrdinalIgnoreCase)) continue;
+                current.UpdateTag = tag;
                 if (!string.IsNullOrWhiteSpace(tag))
                 {
-                    item.UpdateTag = tag;
                     _updateTags[item.Manifest.Id] = tag;
                     _logger.LogInformation("Update available for {Id}: {Tag}", item.Manifest.Id, tag);
                 }
@@ -496,22 +542,34 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
         }
     }
 
-    private async Task RefreshAsync()
+    private async Task RefreshAsync(CancellationToken cancellationToken = default)
     {
         if (_isWorking)
         {
             return;
         }
 
+        if (!cancellationToken.CanBeCanceled) cancellationToken = _pageLifetime?.Token ?? default;
         _isWorking = true;
 
         try
         {
-            await ReloadPluginDataAsync();
+            await ReloadPluginDataAsync(cancellationToken);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
         finally
         {
             _isWorking = false;
+            RefreshPendingCatalog();
+        }
+    }
+
+    private void RefreshPendingCatalog()
+    {
+        if (_catalogRefreshPending && IsLoaded && _pageLifetime is { IsCancellationRequested: false })
+        {
+            _catalogRefreshPending = false;
+            _ = RefreshAsync(_pageLifetime.Token);
         }
     }
 
@@ -552,7 +610,43 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
     }
 
     /// <summary>重读插件数据（不带 _isWorking 锁，供已在 RunAsync 内的流程装完调用）。</summary>
-    private async Task ReloadPluginDataAsync()
+    private sealed record LocalPluginRow(ExtensionStatus Status, List<string> Files, string? Version,
+        bool DiskOnly, AddonDllStatus DllStatus, List<StoredAddonVersion> ArchivedVersions);
+
+    private static Task<List<LocalPluginRow>> ReadLocalPluginRowsAsync(
+        ExtensionManagerService manager, CancellationToken cancellationToken)
+        => Task.Run(async () =>
+        {
+            List<ExtensionStatus> statuses = await manager.GetStatusAsync(cancellationToken);
+            List<ExtensionStatus> plugins = [.. statuses.Where(s => IsPluginExtension(s.Manifest))];
+            string addonsPath = manager.Host.AddonsPath;
+            List<AddonFileInfo> diskFiles = AddonFileInfo.ScanDirectory(addonsPath);
+            var claimed = ExtensionAddonMatcher.Match(plugins.Select(s => s.Manifest), diskFiles);
+            string[] names = Directory.Exists(addonsPath)
+                ? Directory.GetFiles(addonsPath).Select(f => Path.GetFileName(f)!).ToArray() : [];
+            var result = new List<LocalPluginRow>();
+            foreach (ExtensionStatus status in plugins)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                List<string> files = ResolveAddonFiles(status, manager.Host);
+                int ledgerCount = files.Count;
+                if (claimed.TryGetValue(status.Manifest.Id, out var owned))
+                {
+                    foreach (AddonFileInfo info in owned)
+                    {
+                        string full = Path.Combine(addonsPath, info.FileName);
+                        if (!files.Contains(full, StringComparer.OrdinalIgnoreCase)) files.Add(full);
+                    }
+                }
+                result.Add(new LocalPluginRow(status, files, ResolveInstalledVersion(files),
+                    !status.IsInstalled && files.Count > ledgerCount,
+                    AddonDllChecker.CheckFiles(names, status.Manifest.Tags),
+                    manager.VersionStore?.ListVersions(status.Manifest.Id) ?? []));
+            }
+            return result;
+        }, cancellationToken);
+
+    private async Task ReloadPluginDataAsync(CancellationToken cancellationToken = default)
     {
         TextBlock_Status.Text = LoadingStatusText;
 
@@ -580,52 +674,45 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
 
             TextBlock_TargetPath.Text = _manager.Host.RootPath;
 
-            var statuses = await _manager.GetStatusAsync();
-            List<ExtensionStatus> plugins = [.. statuses.Where(s => IsPluginExtension(s.Manifest))];
-
-            // 盘上的 addon 文件：账本只记 Hub 自己装的，用户自己放进去的要靠 addonPatterns 认领
-            string addonsPath = _manager.Host.AddonsPath;
-            List<AddonFileInfo> diskFiles = AddonFileInfo.ScanDirectory(addonsPath);
-            Dictionary<string, List<AddonFileInfo>> claimed =
-                ExtensionAddonMatcher.Match(plugins.Select(s => s.Manifest), diskFiles);
+            // 目录/账本/PE/归档扫描全在工作线程完成，UI 只创建和绑定卡片。
+            List<LocalPluginRow> plugins = await ReadLocalPluginRowsAsync(_manager, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
 
             // 需求5a：这个游戏**实际启用**的插件文件（写在各游戏 ReShade.ini 的 DisabledAddons 里）
             HashSet<string> enabledForGame = BuildEnabledAddonFileSet();
 
             Items.Clear();
-            foreach (ExtensionStatus status in plugins)
+            foreach (LocalPluginRow row in plugins)
             {
-                List<string> addonFiles = ResolveAddonFiles(status);
-                int ledgerCount = addonFiles.Count;
-
-                if (claimed.TryGetValue(status.Manifest.Id, out List<AddonFileInfo>? owned))
-                {
-                    foreach (AddonFileInfo info in owned)
-                    {
-                        string full = Path.Combine(addonsPath, info.FileName);
-                        if (!addonFiles.Contains(full, StringComparer.OrdinalIgnoreCase))
-                        {
-                            addonFiles.Add(full);
-                        }
-                    }
-                }
-
                 var pluginVm = new PluginItemViewModel(
-                    status,
-                    addonFiles,
-                    ResolveInstalledVersion(addonFiles),
-                    foundOnDiskOnly: !status.IsInstalled && addonFiles.Count > ledgerCount,
-                    AddonDllChecker.Check(addonsPath, status.Manifest.Tags),
+                    row.Status,
+                    row.Files,
+                    row.Version,
+                    row.DiskOnly,
+                    row.DllStatus,
                     OnGlobalToggleRequested,
-                    inUseForGame: addonFiles.Any(f => enabledForGame.Contains(Path.GetFileName(f))));
+                    inUseForGame: row.Files.Any(f => enabledForGame.Contains(Path.GetFileName(f))));
 
                 ApplySavedNames(pluginVm);
-                ApplyInstalledVersions(pluginVm);
+                ApplyInstalledVersions(pluginVm, row.ArchivedVersions);
                 Items.Add(pluginVm);
             }
 
-            RefreshAddonFiles();
-            RefreshOptiScaler();
+            ApplyFilter();
+            // 插件卡片先可见；额外的整文件名称解析和目录大小扫描不能堵住首次绘制。
+            string addonsDirectory = _manager.Host.AddonsPath;
+            _allAddonFiles = await Task.Run(() => ReadAddonFiles(addonsDirectory), cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            foreach (var addon in _allAddonFiles) ApplySavedNames(addon);
+            ApplyFilter();
+            var optiData = await Task.Run(() =>
+            {
+                OptiScalerLibrary library = OptiLib;
+                return (Builds: library.List(cancellationToken: cancellationToken),
+                    SelectedId: library.GetSelected(includeDirectorySize: false, cancellationToken: cancellationToken)?.Id);
+            }, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            RefreshOptiScaler(optiData.Builds, optiData.SelectedId);
             RefreshModules();
 
             // 共享 Addons 目录可能刚被装 / 删 / 改名动过 —— 把每个游戏选过版本的插件包重拼一遍
@@ -660,7 +747,8 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
 
             // 刷新末尾顺手清一次失效条目（原来工具栏「清理失效条目」按钮的活）。
             // 结果**追加**在刷新文案后面（「；」拼），不覆盖刷新自己的文案；失败也不影响刷新。
-            string cleanNote = CleanStaleAddonReferences();
+            string cleanNote = await Task.Run(CleanStaleAddonReferences, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
             if (string.IsNullOrWhiteSpace(TextBlock_Status.Text) || TextBlock_Status.Text == LoadingStatusText)
             {
                 TextBlock_Status.Text = $"已读取：{Items.Count} 个插件扩展、{_allAddonFiles.Count} 个插件文件。";
@@ -676,6 +764,7 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
             // 后台查一遍更新（每进一次页面查一次），有新的就在卡片上挂徽标
             _ = CheckUpdatesAsync();
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Refresh plugins");
@@ -686,7 +775,7 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
     /// <summary>
     /// 需求4：把版本归档里这个扩展装过的版本铺进卡片上方的「已安装版本」列表。
     /// </summary>
-    private void ApplyInstalledVersions(PluginItemViewModel item)
+    private void ApplyInstalledVersions(PluginItemViewModel item, List<StoredAddonVersion>? archivedVersions = null)
     {
         try
         {
@@ -707,7 +796,7 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
                 }
             }
 
-            foreach (StoredAddonVersion version in store.ListVersions(item.Manifest.Id))
+            foreach (StoredAddonVersion version in archivedVersions ?? store.ListVersions(item.Manifest.Id))
             {
                 item.ArchivedTags.Add(version.Tag);
 
@@ -783,9 +872,9 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
     }
 
     /// <summary>这个扩展装过的 addon 文件（绝对路径，且现在还在盘上）</summary>
-    private List<string> ResolveAddonFiles(ExtensionStatus status)
+    private static List<string> ResolveAddonFiles(ExtensionStatus status, ShadeHost host)
     {
-        if (_manager is null || status.Installed is null)
+        if (status.Installed is null)
         {
             return [];
         }
@@ -801,7 +890,7 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
 
             try
             {
-                string absolute = _manager.Host.ResolveRelative(relative);
+                string absolute = host.ResolveRelative(relative);
 
                 if (File.Exists(absolute))
                 {
@@ -919,13 +1008,17 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
     /// <summary>重建「当前」的插件文件列表（哪些文件已经归到扩展卡片下面，由 ApplyFilter 再算）</summary>
     private void RefreshAddonFiles()
     {
-        _allAddonFiles = [];
+        _allAddonFiles = ReadAddonFiles(_manager?.Host.AddonsPath);
+        foreach (var addon in _allAddonFiles) ApplySavedNames(addon);
+        ApplyFilter();
+    }
 
-        string? directory = _manager?.Host.AddonsPath;
+    private List<AddonFileItemViewModel> ReadAddonFiles(string? directory)
+    {
+        var result = new List<AddonFileItemViewModel>();
         if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
         {
-            ApplyFilter();
-            return;
+            return result;
         }
 
         var cache = AddonNameCache.Load(PluginHostLocator.AddonNameCachePath ?? string.Empty);
@@ -942,11 +1035,10 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
             // 这个文件属于哪个插件族 → 要不要 DLSS5 那套 dll
             AddonDllStatus dllStatus = AddonDllChecker.CheckFiles(allNames, GameCatalog.TagsOfAddonFile(info.FileName));
             var addonVm = new AddonFileItemViewModel(info, directory, cache, candidates, dllStatus, OnAddonFileToggleRequested);
-            ApplySavedNames(addonVm);
-            _allAddonFiles.Add(addonVm);
+            result.Add(addonVm);
         }
 
-        ApplyFilter();
+        return result;
     }
 
     /// <summary>
@@ -1053,7 +1145,7 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
     }
 
     /// <summary>
-    /// 切视图的公共收口：把这一页的本地数据重读一遍（都是读本地目录，不打网络）、重算过滤 / 可见性，
+    /// 切视图的公共收口：复用本次加载/安装后更新的本地快照，重算过滤 / 可见性，
     /// 最后让新露出来的那一屏「滑进来」、旧的那一屏「滑出去」（整屏平移、缓出，见 MotionAnimations.PlayViewSlide）。
     /// </summary>
     private void SwitchView(string tag)
@@ -1061,20 +1153,7 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
         string previous = _tab;
         _tab = tag;
 
-        // 切到哪一页就把哪一页的本地数据重读一遍（都是读本地目录，不打网络）
-        if (tag == "optiscaler")
-        {
-            RefreshOptiScaler();
-        }
-        else if (tag == "modules")
-        {
-            RefreshModules();
-        }
-        else
-        {
-            RefreshAddonFiles();
-        }
-
+        // 切标签不能重新读 DLL/递归统计整库；外部文件变化用刷新按钮重读。
         ApplyFilter();
 
         // 必须等 ApplyFilter 把 Visibility 落定之后再播，否则动的是个还看不见的元素。
@@ -1368,7 +1447,14 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
             return;
         }
 
-        bool wasLocalized = row.IsLocalized;
+        // 显示状态在后台检查；真正操作前必须等到内容核对完成，不能用占位状态决定还原。
+        bool wasLocalized;
+        try { wasLocalized = await row.EnsureLocalizeStateAsync(); }
+        catch (Exception ex)
+        {
+            await ShowMessageAsync("汉化状态检查失败", ex.Message);
+            return;
+        }
         string message = await RunWithProgressAsync(
             wasLocalized ? "正在还原" : "正在汉化",
             (progress, token) => wasLocalized
@@ -1682,7 +1768,7 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
     /// 扫一遍本地 OptiScaler 库 + 填上「可下载」的来源。
     /// 库目录：&lt;用户数据目录&gt;\OptiScaler（跟 HoYoShade 目录平级，不进插件目录）。
     /// </summary>
-    private void RefreshOptiScaler()
+    private void RefreshOptiScaler(List<OptiScalerBuild>? cachedBuilds = null, string? cachedSelectedId = null)
     {
         // 刷新会重建整个列表，先记住哪些卡片是展开的，重建后还给它展开
         HashSet<string> expandedBuilds = [.. _allOptiScalerBuilds.Where(b => b.IsExpanded).Select(b => b.Id)];
@@ -1700,8 +1786,9 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
         }
 
         OptiScalerLibrary library = OptiLib;
-        OptiScalerBuild? selected = library.GetSelected();
-        List<OptiScalerBuild> all = library.List();
+        string? selectedId = cachedBuilds is null
+            ? library.GetSelected(includeDirectorySize: false)?.Id : cachedSelectedId;
+        List<OptiScalerBuild> all = cachedBuilds ?? library.List();
 
         // 来源 = 远端目录（catalog/optiscaler.json，缓存在 .hysx\catalog；首跑离线用随包种子）
         List<OptiScalerSource> sources = OptiScalerCatalog.Normalize(
@@ -1718,7 +1805,9 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
         {
             byId.TryGetValue(build.SourceId, out OptiScalerSource? source);
 
-            var vm = new OptiScalerBuildItemViewModel(build, selected?.Id, source)
+            OptiScalerSource? catalogSource = source ?? sources.FirstOrDefault(s =>
+                string.Equals(s.Name, build.SourceId, StringComparison.OrdinalIgnoreCase));
+            var vm = new OptiScalerBuildItemViewModel(build, selectedId, source, catalogSource)
             {
                 IsExpanded = expandedBuilds.Contains(build.Id),
             };
@@ -1741,7 +1830,7 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
                     BuildId = b.Id,
                     Version = b.Version,
                     DisplayText = string.IsNullOrWhiteSpace(b.AssetName) ? b.Version : $"{b.Version}  ·  {b.AssetName}",
-                    IsCurrent = string.Equals(b.Id, selected?.Id, StringComparison.OrdinalIgnoreCase),
+                    IsCurrent = string.Equals(b.Id, selectedId, StringComparison.OrdinalIgnoreCase),
                 }));
 
             if (source is not null && _optiScalerVersions.TryGetValue(source.Id, out List<ExtensionVersion>? cached))
@@ -1975,7 +2064,9 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
 
         try
         {
-            List<ExtensionVersion> versions = await OptiDownloads.ListVersionsAsync(item.Source, default, force);
+            List<ExtensionVersion> versions = await ShareVersionRequestAsync(
+                "opti|" + JsonSerializer.Serialize(item.Source), force,
+                () => OptiDownloads.ListVersionsAsync(item.Source, default, force));
 
             _optiScalerVersions[item.Source.Id] = versions;
             item.ApplyVersions(versions);
@@ -2467,7 +2558,7 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
     }
 
     /// <summary>拉一个模块能装的版本（GitHub tag，新 → 旧）</summary>
-    private static async Task<List<ExtensionVersion>> ListModuleVersionsAsync(ModuleDefinition module, bool force)
+    private async Task<List<ExtensionVersion>> ListModuleVersionsAsync(ModuleDefinition module, bool force)
     {
         var source = new OptiScalerSource
         {
@@ -2477,7 +2568,8 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
             TagPattern = module.TagPattern,
         };
 
-        return await Task.Run(() => new OptiScalerDownloader().ListVersionsAsync(source, default, force));
+        return await ShareVersionRequestAsync("opti|" + JsonSerializer.Serialize(source), force,
+            () => new OptiScalerDownloader().ListVersionsAsync(source, default, force));
     }
 
     /// <summary>「可下载」卡片：拉版本列表铺进下拉</summary>
@@ -3821,8 +3913,10 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
         try
         {
             item.VersionsHint = "正在获取版本列表…";
-            List<ExtensionVersion> versions = await Task.Run(
-                () => _manager.ListVersionsAsync(item.Manifest, 30, default, force));
+            ExtensionManagerService manager = _manager;
+            List<ExtensionVersion> versions = await ShareVersionRequestAsync(
+                "plugin|" + JsonSerializer.Serialize(item.Manifest.Source), force,
+                () => manager.ListVersionsAsync(item.Manifest, 30, default, force));
 
             item.ApplyVersions(versions);
 
@@ -3846,6 +3940,18 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
             item.VersionsLoaded = true;
             item.VersionsHint = "拉版本列表失败：" + ex.Message;
         }
+    }
+
+    /// <summary>同一来源的展开/下拉共享正在进行的请求；手动强刷与普通缓存读取分开。</summary>
+    private async Task<List<ExtensionVersion>> ShareVersionRequestAsync(
+        string key, bool force, Func<Task<List<ExtensionVersion>>> fetch)
+    {
+        key += force ? "|force" : "|cached";
+        if (_versionRequests.TryGetValue(key, out var pending)) return await pending;
+        var request = Task.Run(fetch);
+        _versionRequests[key] = request;
+        try { return await request; }
+        finally { _versionRequests.Remove(key); }
     }
 
     /// <summary>
@@ -4494,6 +4600,7 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
             _isWorking = false;
             ProgressBar_Overall.IsIndeterminate = false;
             ProgressBar_Overall.Visibility = Visibility.Collapsed;
+            RefreshPendingCatalog();
         }
     }
 
@@ -5069,6 +5176,9 @@ public sealed partial class InstalledPluginVersionRow : ObservableObject
     public Visibility CanLocalizeVisibility => CanLocalize ? Visibility.Visible : Visibility.Collapsed;
 
     private bool? _isLocalized;
+    private Task<bool>? _localizeStateTask;
+    private int _localizeStateGeneration;
+    private Exception? _localizeStateError;
 
     /// <summary>
     /// 这个版本是不是汉化状态：有备份**而且**盘上那份跟备份内容不一样（= 补丁确实还在）。
@@ -5079,23 +5189,58 @@ public sealed partial class InstalledPluginVersionRow : ObservableObject
     {
         get
         {
-            if (_isLocalized is null)
-            {
-                string? file = LocalizeTargetFile;
-                string? backup = file is null
-                    ? null
-                    : AddonLocalizer.BackupPathOf(file, GlobalPluginPage.I18nBackupDirectory);
-
-                _isLocalized = file is not null
-                    && backup is not null
-                    && !AddonLocalizationJob.SameContent(file, backup);
-            }
-
-            return _isLocalized.Value;
+            _ = LoadLocalizeStateAsync();
+            return _isLocalized ?? false;
         }
     }
 
-    public string LocalizeButtonText => IsLocalized ? "已汉化·还原" : "汉化";
+    private Task<bool> LoadLocalizeStateAsync()
+        => _isLocalized is bool state ? Task.FromResult(state)
+            : _localizeStateTask ??= ReadLocalizeStateAsync(_localizeStateGeneration);
+
+    public async Task<bool> EnsureLocalizeStateAsync()
+    {
+        bool localized = await LoadLocalizeStateAsync();
+        if (_localizeStateError is { } error)
+            throw new IOException("无法核对该版本的汉化备份，请刷新后重试。", error);
+        return localized;
+    }
+
+    private async Task<bool> ReadLocalizeStateAsync(int generation)
+    {
+        string? file = LocalizeTargetFile;
+        string backupDirectory = GlobalPluginPage.I18nBackupDirectory;
+        bool localized = false;
+        Exception? failure = null;
+        try
+        {
+            localized = await Task.Run(() =>
+            {
+                string? backup = file is null ? null : AddonLocalizer.BackupPathOf(file, backupDirectory);
+                return file is not null && backup is not null && !AddonLocalizationJob.SameContent(file, backup);
+            });
+        }
+        catch (Exception ex) { failure = ex; }
+        if (generation == _localizeStateGeneration)
+        {
+            _isLocalized = localized;
+            _localizeStateError = failure;
+            OnPropertyChanged(nameof(IsLocalized));
+            OnPropertyChanged(nameof(LocalizeButtonText));
+            OnPropertyChanged(nameof(LocalizeButtonTooltip));
+        }
+        return localized;
+    }
+
+    public string LocalizeButtonText
+    {
+        get
+        {
+            _ = LoadLocalizeStateAsync();
+            return _localizeStateError is not null ? "检查失败" : _isLocalized is null
+                ? "检查中…" : _isLocalized.Value ? "已汉化·还原" : "汉化";
+        }
+    }
 
     public string LocalizeButtonTooltip => IsLocalized
         ? "这个版本已按翻译表替换成中文；点击从备份还原成原版（重启游戏生效）"
@@ -5105,6 +5250,9 @@ public sealed partial class InstalledPluginVersionRow : ObservableObject
     public void RefreshLocalizeState()
     {
         _isLocalized = null;
+        _localizeStateTask = null;
+        _localizeStateGeneration++;
+        _localizeStateError = null;
         OnPropertyChanged(nameof(IsLocalized));
         OnPropertyChanged(nameof(LocalizeButtonText));
         OnPropertyChanged(nameof(LocalizeButtonTooltip));
@@ -5320,9 +5468,11 @@ public sealed partial class OptiScalerBuildItemViewModel : ObservableObject, IOp
 {
     private readonly Dictionary<string, string> _versionTags = new(StringComparer.OrdinalIgnoreCase);
 
-    public OptiScalerBuildItemViewModel(OptiScalerBuild build, string? selectedId, OptiScalerSource? source)
+    public OptiScalerBuildItemViewModel(OptiScalerBuild build, string? selectedId, OptiScalerSource? source,
+        OptiScalerSource? catalogSource = null)
     {
         Build = build;
+        CatalogSource = catalogSource ?? source;
         Enabled = string.Equals(build.Id, selectedId, StringComparison.OrdinalIgnoreCase);
         Source = source ?? new OptiScalerSource
         {
@@ -5346,12 +5496,7 @@ public sealed partial class OptiScalerBuildItemViewModel : ObservableObject, IOp
     /// 这里按 id → 名字 → 仓库名 三级去目录里找，找到就用目录那份（卡片就复用了可下载卡片的信息）。
     /// 找不到才退回本地记的字符串。
     /// </summary>
-    public OptiScalerSource? CatalogSource
-        => OptiScalerCatalog.Find(OptiScalerCatalog.LoadFile(RemoteCatalogService.OptiScalerCachePath), Build.SourceId)
-           ?? OptiScalerCatalog.Normalize(OptiScalerCatalog.LoadFile(RemoteCatalogService.OptiScalerCachePath)).FirstOrDefault(s =>
-               string.Equals(s.Name, Build.SourceId, StringComparison.OrdinalIgnoreCase)
-               || (!string.IsNullOrWhiteSpace(Source.Repository)
-                   && string.Equals(s.Repository, Source.Repository, StringComparison.OrdinalIgnoreCase)));
+    public OptiScalerSource? CatalogSource { get; }
 
     /// <summary>来源名字：目录里找得到就用那个（更完整），否则退回本地记的 id</summary>
     public string SourceName => CatalogSource?.Name ?? Source.Name;

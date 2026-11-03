@@ -94,9 +94,9 @@ public sealed partial class FileManageSetting : PageBase
         {
             [-1] = Lang.HoYoShadeDownloadView_Server_AutoSelect,
             [0] = Lang.HoYoShadeDownloadView_Server_GithubDirect,
-            [1] = AppConfig.EnableEch ? "Cloudflare ECH" : Lang.HoYoShadeDownloadView_Server_Cloudflare,
-            [2] = Lang.HoYoShadeDownloadView_Server_TencentCloud,
-            [3] = Lang.HoYoShadeDownloadView_Server_AlibabaCloud,
+
+
+
         }))
         {
             DownloadServers.Add(server);

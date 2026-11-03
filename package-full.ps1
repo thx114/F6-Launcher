@@ -95,6 +95,7 @@ param(
 $ErrorActionPreference = "Stop"
 $repoRoot = $PSScriptRoot
 . (Join-Path $repoRoot 'tools\package-storage.ps1')
+. (Join-Path $repoRoot 'tools\package-licenses.ps1')
 $cleanupRecords = [System.Collections.Generic.List[object]]::new()
 $packageSucceeded = $false
 $stagingOwned = $false
@@ -416,9 +417,11 @@ try {
 
     # 7) 打 zip
     New-Item -ItemType Directory -Force -Path $zipDir | Out-Null
-    $zip = Join-Path $zipDir ("HoYoShadeHub_Portable_" + $Version + "_" + $Architecture + "_Full.zip")
+    $zip = Join-Path $zipDir ("F6Launcher_Portable_" + $Version + "_" + $Architecture + "_Full.zip")
     if (Test-Path $zip) { Remove-Item $zip -Force }
 
+    Copy-DistributionLicenses -RepoRoot $repoRoot -Destinations @($outDir, (Join-Path $outDir "app-$Version"))
+    Assert-ForkDistribution -RepoRoot $repoRoot -Output $outDir -Version $Version
     Write-Host "==> 打包 zip => $zip" -ForegroundColor Cyan
     Add-Type -AssemblyName System.IO.Compression
     Add-Type -AssemblyName System.IO.Compression.FileSystem

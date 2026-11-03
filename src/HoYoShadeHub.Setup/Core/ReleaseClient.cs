@@ -1,4 +1,4 @@
-﻿using HoYoShadeHub.Setup.Core.Github;
+using HoYoShadeHub.Setup.Core.Github;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -16,7 +16,7 @@ namespace HoYoShadeHub.Setup.Core;
 
 public class ReleaseClient
 {
-    public static Uri DefaultBaseAddress { get; set; } = new("https://cdn.cf.storage.hub.hoyosha.de/release/");
+    public static Uri DefaultBaseAddress { get; set; } = new("https://raw.githubusercontent.com/thx114/HoYoShadeHub-DLSS5/main/metadata/");
 
 
     private readonly HttpClient _httpClient;
@@ -25,13 +25,14 @@ public class ReleaseClient
     {
         if (httpClient is null)
         {
-            _httpClient = new HttpClient(new SocketsHttpHandler
+            _httpClient = new HttpClient(new HoYoShadeHub.Core.Networking.ForkNetworkPolicyHandler(new SocketsHttpHandler
             {
+                AllowAutoRedirect = false,
                 AutomaticDecompression = DecompressionMethods.All,
                 EnableMultipleHttp2Connections = true,
                 EnableMultipleHttp3Connections = true,
                 PooledConnectionLifetime = TimeSpan.FromMinutes(5),
-            });
+            }));
             _httpClient.DefaultRequestHeaders.Add("User-Agent", $"{Path.GetFileNameWithoutExtension(Environment.ProcessPath)}/*");
         }
         else
@@ -39,6 +40,7 @@ public class ReleaseClient
             _httpClient = httpClient;
         }
         _httpClient.BaseAddress = DefaultBaseAddress;
+        HoYoShadeHub.Core.Networking.ForkNetworkPolicy.EnsureAllowed(DefaultBaseAddress.AbsoluteUri);
     }
 
 
@@ -56,6 +58,8 @@ public class ReleaseClient
 
     public async Task<ReleaseInfoDetail> GetLatestReleaseInfoDetailAsync(bool isPrerelease, string currentVersion, Architecture arch, InstallType type, CancellationToken cancellationToken = default)
     {
+        if (type != InstallType.Portable)
+            throw new NotSupportedException("F6 Launcher is distributed as a portable Full ZIP. Download it from https://github.com/thx114/HoYoShadeHub-DLSS5/releases .");
         var url = isPrerelease switch
         {
             false => "release_info_stable.json",
@@ -87,6 +91,7 @@ public class ReleaseClient
 
     public async Task<ReleaseManifest> GetReleaseManifestAsync(string url, CancellationToken cancellationToken = default)
     {
+        HoYoShadeHub.Core.Networking.ForkNetworkPolicy.EnsureAllowed(url);
         var manifest = await _httpClient.GetFromJsonAsync(url, ReleaseJsonContext.Default.ReleaseManifest, cancellationToken);
         return manifest ?? throw new NullReferenceException($"Cannot get json content from '{url}'.");
     }
@@ -99,7 +104,7 @@ public class ReleaseClient
 
     public async Task<GithubRelease?> GetGithubLatestReleaseAsync(CancellationToken cancellationToken = default)
     {
-        const string url = "https://api.github.com/repos/DuolaD/HoYoShade-Hub/releases?page=1&per_page=1";
+        const string url = "https://api.github.com/repos/thx114/HoYoShadeHub-DLSS5/releases?page=1&per_page=1";
         var list = await _httpClient.GetFromJsonAsync(url, ReleaseJsonContext.Default.ListGithubRelease, cancellationToken);
         return list?.FirstOrDefault();
     }
@@ -108,7 +113,7 @@ public class ReleaseClient
 
     public async Task<List<GithubRelease>> GetGithubReleaseAsync(int page, int perPage, CancellationToken cancellationToken = default)
     {
-        string url = $"https://api.github.com/repos/DuolaD/HoYoShade-Hub/releases?page={page}&per_page={perPage}";
+        string url = $"https://api.github.com/repos/thx114/HoYoShadeHub-DLSS5/releases?page={page}&per_page={perPage}";
         var list = await _httpClient.GetFromJsonAsync(url, ReleaseJsonContext.Default.ListGithubRelease, cancellationToken);
         return list ?? new List<GithubRelease>();
     }
@@ -117,7 +122,7 @@ public class ReleaseClient
 
     public async Task<GithubRelease?> GetGithubReleaseAsync(string tag, CancellationToken cancellationToken = default)
     {
-        string url = $"https://api.github.com/repos/DuolaD/HoYoShade-Hub/releases/tags/{tag}";
+        string url = $"https://api.github.com/repos/thx114/HoYoShadeHub-DLSS5/releases/tags/{tag}";
         return await _httpClient.GetFromJsonAsync(url, ReleaseJsonContext.Default.GithubRelease, cancellationToken);
     }
 
@@ -129,7 +134,7 @@ public class ReleaseClient
         {
             Text = markdown,
             Mode = "gfm",
-            Context = "DuolaD/HoYoShade-Hub",
+            Context = "thx114/HoYoShadeHub-DLSS5",
         };
         var content = new StringContent(JsonSerializer.Serialize(request, ReleaseJsonContext.Default.GithubMarkdownRequest), Encoding.UTF8, "application/json");
         var response = await _httpClient.PostAsync(url, content, cancellationToken);

@@ -68,7 +68,7 @@ public sealed partial class SystemTrayWindow : WindowEx
     {
         try
         {
-            string icon = Path.Combine(AppContext.BaseDirectory, "Assets", "logo.ico");
+            string icon = Path.Combine(AppContext.BaseDirectory, "Assets", "f6-logo.ico");
             if (File.Exists(icon))
             {
                 trayIcon.Icon = new(icon);

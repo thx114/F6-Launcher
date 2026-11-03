@@ -109,7 +109,7 @@ public class InstallWindow : WindowBase
                 new TextBlock().FontWeight(FontWeight.Bold)
                                .FontSize(28)
                                .Foreground(Theme.Palette.Accent)
-                               .Text("HoYoShade Hub"),
+                               .Text("F6 Launcher"),
                 new TextBlock().FontSize(14)
                                .Foreground(Theme.Palette.DisabledAccent)
                                .Text(Lang.GameLauncherForMiHoYo)));
@@ -250,15 +250,15 @@ public class InstallWindow : WindowBase
         try
         {
             string? folder = RegistryHelper.GetInstallLocation();
-            if (!Directory.Exists(folder) || !string.Equals(new DirectoryInfo(folder).Name, "HoYoShade Hub", StringComparison.OrdinalIgnoreCase))
+            if (!Directory.Exists(folder) || !string.Equals(new DirectoryInfo(folder).Name, "F6 Launcher", StringComparison.OrdinalIgnoreCase))
             {
-                folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "HoYoShade Hub");
+                folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "F6 Launcher");
             }
             SetInstallFolder(folder);
         }
         catch
         {
-            SetInstallFolder(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "HoYoShade Hub"));
+            SetInstallFolder(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "F6 Launcher"));
         }
     }
 
@@ -286,9 +286,9 @@ public class InstallWindow : WindowBase
             string? folder = FileDialog.SelectFolder(new FolderDialogOptions { Owner = this.Handle });
             if (Directory.Exists(folder))
             {
-                if (new DirectoryInfo(folder).Name is not "HoYoShade Hub")
+                if (new DirectoryInfo(folder).Name is not "F6 Launcher")
                 {
-                    folder = Path.Combine(folder, "HoYoShade Hub");
+                    folder = Path.Combine(folder, "F6 Launcher");
                 }
                 SetInstallFolder(folder);
                 if (DriveHelper.IsDeviceRemovableOrOnUSB(folder))
@@ -322,7 +322,7 @@ public class InstallWindow : WindowBase
         const double MB = 1 << 20;
         try
         {
-            if (!string.Equals(new DirectoryInfo(InstallFolder.Value).Name, "HoYoShade Hub", StringComparison.OrdinalIgnoreCase))
+            if (!string.Equals(new DirectoryInfo(InstallFolder.Value).Name, "F6 Launcher", StringComparison.OrdinalIgnoreCase))
             {
                 if (SilentMode)
                 {
@@ -458,13 +458,13 @@ public class InstallWindow : WindowBase
 
     private void CreateShortcut()
     {
-        string folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), "HoYoShade Hub");
+        string folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), "F6 Launcher");
         Directory.CreateDirectory(folder);
-        CreateShortcutInternal(Path.Combine(folder, "HoYoShade Hub.lnk"));
+        CreateShortcutInternal(Path.Combine(folder, "F6 Launcher.lnk"));
         try
         {
             // 创建桌面快捷方式可能被安全软件拦截
-            CreateShortcutInternal(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Desktop), "HoYoShade Hub.lnk"));
+            CreateShortcutInternal(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Desktop), "F6 Launcher.lnk"));
         }
         catch { }
     }
@@ -486,7 +486,7 @@ public class InstallWindow : WindowBase
     {
         Process.Start(new ProcessStartInfo
         {
-            FileName = "https://hoyosha.de/user-agreement",
+            FileName = "https://github.com/thx114/HoYoShadeHub-DLSS5/blob/main/NOTICE.md",
             UseShellExecute = true,
         });
     }

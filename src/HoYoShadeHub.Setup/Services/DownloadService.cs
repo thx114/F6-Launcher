@@ -1,4 +1,4 @@
-﻿using Microsoft.Win32;
+using Microsoft.Win32;
 using SharpCompress.Compressors.ZStandard;
 using HoYoShadeHub.Setup.Core;
 using System.Buffers;
@@ -46,8 +46,8 @@ public class DownloadService
     protected void RecreateHttpClient()
     {
         string ver = typeof(DownloadService).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "";
-        _httpClient = new HttpClient(new HttpClientHandler { AutomaticDecompression = DecompressionMethods.All }) { DefaultVersionPolicy = HttpVersionPolicy.RequestVersionOrHigher };
-        _httpClient.DefaultRequestHeaders.Add("User-Agent", $"HoYoShadeHub.Setup/{ver}");
+        _httpClient = new HttpClient(new HoYoShadeHub.Core.Networking.ForkNetworkPolicyHandler(new HttpClientHandler { AllowAutoRedirect = false, AutomaticDecompression = DecompressionMethods.All })) { DefaultVersionPolicy = HttpVersionPolicy.RequestVersionOrHigher };
+        _httpClient.DefaultRequestHeaders.Add("User-Agent", $"F6Launcher.Setup/{ver}");
         _httpClient.DefaultRequestHeaders.Add("X-Sw-Device-Id", DeviceId.ToString());
         _httpClient.DefaultRequestHeaders.Add("X-Sw-Session-Id", SessionId.ToString());
         _releaseClient = new ReleaseClient(_httpClient);

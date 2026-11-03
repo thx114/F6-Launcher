@@ -23,8 +23,8 @@
 		<CsWinRTAotOptimizerEnabled Condition="'$(Configuration)' == 'Debug'">false</CsWinRTAotOptimizerEnabled>
 		<CsWinRTAotOptimizerEnabled Condition="'$(Configuration)' != 'Debug'">true</CsWinRTAotOptimizerEnabled>
 		<CETCompat>false</CETCompat>
-		<Product>HoYoShade Hub</Product>
-		<Copyright>Copyright © 2025 HoYoShade Hub Team</Copyright>
+		<Product>F6 Launcher</Product>
+		<Copyright>Copyright (c) 2025 哆啦D夢|DuolaD; F6 modifications (c) 2026 thx114</Copyright>
 	</PropertyGroup>
 	<ItemGroup>
 		<PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
@@ -107,4 +107,12 @@
 	</ItemGroup>
 
 
+	<Target Name="UseIndependentForkBranding" BeforeTargets="AssignTargetPaths">
+		<ItemGroup>
+			<Content Remove="@(Content)" Condition="'%(Content.Link)' == 'Assets\logo.ico' Or '%(Content.Link)' == 'Assets\logo.png'" />
+		</ItemGroup>
+	</Target>
+	<ItemGroup>
+		<Content Include="Assets\f6-logo.png;Assets\f6-logo.ico" CopyToOutputDirectory="Always" CopyToPublishDirectory="Always" />
+	</ItemGroup>
 </Project>

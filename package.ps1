@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     通用构建与打包脚本：发布主程序并打成便携版（含 zip）。
 
@@ -11,7 +11,7 @@
         └─ app-<版本>\            主程序（dotnet publish，自包含、ReadyToRun）
 
     同时生成 zip：
-        build\release\HoYoShadeHub_Portable_<版本>_<架构>.zip
+        build\release\F6Launcher_Portable_<版本>_<架构>.zip
 
     注意：
     - zip 使用 .NET ZipArchive 逐条写入，条目名强制使用正斜杠。
@@ -69,6 +69,7 @@ param(
 $ErrorActionPreference = "Stop"
 $repoRoot = $PSScriptRoot
 . (Join-Path $repoRoot 'tools\package-storage.ps1')
+. (Join-Path $repoRoot 'tools\package-licenses.ps1')
 $packageCleanup = [System.Collections.Generic.List[object]]::new()
 $ownsStaging = $false
 $ordinarySucceeded = $false
@@ -168,6 +169,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "启动器 publish 失败（exit $LASTEXITCODE）" }
 
     Move-Item (Join-Path $staleLauncher "HoYoShadeHub.exe") (Join-Path $outDir "HoYoShadeHub.exe") -Force
+    # Independent entry point; keep the historical filename for existing updater contracts.
+    Copy-Item -LiteralPath (Join-Path $outDir 'HoYoShadeHub.exe') -Destination (Join-Path $outDir 'F6Launcher.exe') -Force
     Remove-PackageArtifact -LiteralPath $staleLauncher -AllowedRoot $outDir -Records $packageCleanup
 
     Set-Content -Path (Join-Path $outDir "version.ini") `
@@ -196,6 +199,9 @@ try {
             Remove-PackageArtifact -LiteralPath $_.FullName -AllowedRoot $outDir -Records $packageCleanup
         }
 
+    Copy-DistributionLicenses -RepoRoot $repoRoot -Destinations @($outDir, $appDir)
+    Assert-ForkDistribution -RepoRoot $repoRoot -Output $outDir -Version $Version
+
     if ($SkipZip) {
         Write-Host "基础发布完成（Full 流程跳过普通便携 ZIP）：$outDir" -ForegroundColor Green
         return
@@ -203,7 +209,7 @@ try {
 
     $zipDir = Join-Path $repoRoot "build/release"
     New-Item -ItemType Directory -Force -Path $zipDir | Out-Null
-    $zip = Join-Path $zipDir "HoYoShadeHub_Portable_${Version}_$Architecture.zip"
+    $zip = Join-Path $zipDir "F6Launcher_Portable_${Version}_$Architecture.zip"
     if (Test-Path $zip) { Remove-Item $zip -Force }
 
     Write-Host "==> 打包 zip => $zip" -ForegroundColor Cyan

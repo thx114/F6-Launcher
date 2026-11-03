@@ -97,7 +97,7 @@ internal class UpdateService
     {
         try
         {
-            _logger.LogInformation("Prepare for update HoYoShade Hub");
+            _logger.LogInformation("Prepare for update F6 Launcher");
             State = UpdateState.Pending;
             this.targetPath = targetPath;
             this.proxyUrl = proxyUrl;

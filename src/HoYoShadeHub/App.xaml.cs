@@ -9,7 +9,6 @@ using System.Collections;
 using System.IO;
 using System.Text;
 using System.Threading.Tasks;
-using System.Timers;
 
 
 namespace HoYoShadeHub;
@@ -22,8 +21,6 @@ public partial class App : Application
 
 
     private readonly DispatcherQueue _uiDispatcherQueue;
-
-    private readonly Timer _gcTimer = new(TimeSpan.FromSeconds(60));
 
     // 跨版本单实例：第二个实例通过这个命名事件把已有窗口叫到前台
     public const string ActivateEventName = "Local\\HoYoShadeHub.Activate.v1";
@@ -39,7 +36,6 @@ public partial class App : Application
         RequestedTheme = ApplicationTheme.Dark;
         _uiDispatcherQueue = DispatcherQueue.GetForCurrentThread();
         UnhandledException += App_UnhandledException;
-        _gcTimer.Elapsed += (_, _) => GC.Collect();
         _ = AppConfig.Language;
     }
 

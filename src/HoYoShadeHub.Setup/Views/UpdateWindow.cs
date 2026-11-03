@@ -1,4 +1,4 @@
-﻿using Aprillz.MewUI;
+using Aprillz.MewUI;
 using Aprillz.MewUI.Controls;
 using Microsoft.Extensions.Configuration;
 using HoYoShadeHub.Setup.Locale;
@@ -81,7 +81,7 @@ public class UpdateWindow : WindowBase
             new TextBlock().FontWeight(FontWeight.Bold)
                            .FontSize(24)
                            .Foreground(Theme.Palette.Accent)
-                           .Text("HoYoShade Hub"),
+                           .Text("F6 Launcher"),
             new TextBlock().FontSize(13)
                            .Foreground(Theme.Palette.DisabledAccent)
                            .Text(Lang.GameLauncherForMiHoYo),

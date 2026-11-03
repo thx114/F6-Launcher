@@ -98,7 +98,7 @@ public static class RpcRunner
             config.RemoveAllLoggers();
             config.ConfigureHttpClient(client =>
             {
-                client.DefaultRequestHeaders.Add("User-Agent", $"HoYoShadeHub.RPC/{AppConfig.AppVersion}");
+                client.DefaultRequestHeaders.Add("User-Agent", $"F6Launcher.RPC/{AppConfig.AppVersion}");
                 client.DefaultVersionPolicy = HttpVersionPolicy.RequestVersionOrHigher;
             });
             config.ConfigurePrimaryHttpMessageHandler(() => new EchFallbackHttpMessageHandler(new SocketsHttpHandler

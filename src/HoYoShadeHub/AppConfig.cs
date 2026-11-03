@@ -650,7 +650,7 @@ public static class AppConfig
                 config.RemoveAllLoggers();
                 config.ConfigureHttpClient(client =>
                 {
-                    client.DefaultRequestHeaders.Add("User-Agent", $"HoYoShadeHub/{AppVersion}");
+                    client.DefaultRequestHeaders.Add("User-Agent", $"F6Launcher/{AppVersion}");
                     client.DefaultVersionPolicy = HttpVersionPolicy.RequestVersionOrHigher;
                 });
                 config.ConfigurePrimaryHttpMessageHandler(() => DohService.CreateSocketsHttpHandler());
@@ -1300,29 +1300,31 @@ public static class AppConfig
     /// 现在读写同一个键 DownloadServer_V3；老键只在第一次读时用来做迁移。
     /// </para>
     /// </summary>
+    private static int NormalizeForkDownloadServer(int value) => value is 1 or 2 or 3 ? 0 : value;
+
     public static int DownloadServer
     {
         get
         {
             if (HasValue("DownloadServer_V3"))
             {
-                return GetValue(-1, "DownloadServer_V3");
+                return NormalizeForkDownloadServer(GetValue(-1, "DownloadServer_V3"));
             }
 
             // 迁移：老配置里哪份设过就用哪份（框架那份才是下载卡片用的，优先）
             if (HasValue("HoYoShadeFrameworkDownloadServer_V2"))
             {
-                return GetValue(-1, "HoYoShadeFrameworkDownloadServer_V2");
+                return NormalizeForkDownloadServer(GetValue(-1, "HoYoShadeFrameworkDownloadServer_V2"));
             }
 
             if (HasValue("LauncherUpdateDownloadServer_V2"))
             {
-                return GetValue(-1, "LauncherUpdateDownloadServer_V2");
+                return NormalizeForkDownloadServer(GetValue(-1, "LauncherUpdateDownloadServer_V2"));
             }
 
             return -1;
         }
-        set => SetValue(value, "DownloadServer_V3");
+        set => SetValue(NormalizeForkDownloadServer(value), "DownloadServer_V3");
     }
 
     /// <summary>启动器自身更新用的服务器  和 DownloadServer 是同一个设置</summary>

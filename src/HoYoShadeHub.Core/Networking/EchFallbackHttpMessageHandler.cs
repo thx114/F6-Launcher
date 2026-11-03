@@ -18,6 +18,7 @@ public class EchFallbackHttpMessageHandler : DelegatingHandler
 
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
+        ForkNetworkPolicy.EnsureAllowed(request.RequestUri?.AbsoluteUri);
         if (DohService.EnableEch && request.RequestUri != null)
         {
             var host = request.RequestUri.Host;
@@ -69,7 +70,8 @@ public class EchFallbackHttpMessageHandler : DelegatingHandler
             argsBuilder.Append($"--doh-url \"{dohUrl}\" ");
         }
         
-        argsBuilder.Append("-s -L -f ");
+        // Redirects are handled and validated by ForkNetworkPolicyHandler.
+        argsBuilder.Append("-s --dump-header - ");
 
         foreach (var header in request.Headers)
         {
@@ -132,18 +134,48 @@ public class EchFallbackHttpMessageHandler : DelegatingHandler
                 catch {}
             });
 
-            // Wait briefly to see if it fails/exits immediately
-            await Task.Delay(50, cancellationToken);
-            if (process.HasExited && process.ExitCode != 0)
+            // Read only headers, byte by byte, leaving binary payload bytes in the stream.
+            // This also preserves redirect/error status for the outer policy handler.
+            var output = process.StandardOutput.BaseStream;
+            string header;
+            string[] lines;
+            int status;
+            do
             {
-                process.Dispose();
-                return null;
+                using var buffer = new MemoryStream();
+                byte[] one = new byte[1];
+                while (buffer.Length < 65536)
+                {
+                    if (await output.ReadAsync(one, cancellationToken) == 0)
+                        throw new HttpRequestException("curl did not return complete HTTP headers.");
+                    buffer.WriteByte(one[0]);
+                    if (buffer.Length >= 4)
+                    {
+                        var bytes = buffer.GetBuffer();
+                        int n = (int)buffer.Length;
+                        if (bytes[n - 4] == 13 && bytes[n - 3] == 10 && bytes[n - 2] == 13 && bytes[n - 1] == 10) break;
+                    }
+                }
+                if (buffer.Length >= 65536) throw new HttpRequestException("curl HTTP headers too large.");
+                header = Encoding.Latin1.GetString(buffer.ToArray());
+                lines = header.Split("\r\n", StringSplitOptions.RemoveEmptyEntries);
+                if (lines.Length == 0 || !int.TryParse(lines[0].Split(' ')[1], out status))
+                    throw new HttpRequestException("Invalid curl HTTP status.");
             }
-
-            var responseMessage = new HttpResponseMessage(HttpStatusCode.OK)
+            while (status < 200 || lines[0].Contains("Connection established", StringComparison.OrdinalIgnoreCase));
+            var responseMessage = new HttpResponseMessage((HttpStatusCode)status)
             {
-                Content = new StreamContent(new ProcessStream(process.StandardOutput.BaseStream, process, tempFile, cancellationToken))
+                RequestMessage = request,
+                Content = new StreamContent(new ProcessStream(output, process, tempFile, cancellationToken))
             };
+            foreach (string line in lines.Skip(1))
+            {
+                int separator = line.IndexOf(':');
+                if (separator <= 0) continue;
+                string key = line[..separator], value = line[(separator + 1)..].Trim();
+                if (!responseMessage.Headers.TryAddWithoutValidation(key, value))
+                    responseMessage.Content.Headers.TryAddWithoutValidation(key, value);
+            }
             return responseMessage;
         }
         catch

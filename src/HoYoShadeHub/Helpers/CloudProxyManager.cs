@@ -13,33 +13,9 @@ namespace HoYoShadeHub.Helpers;
 /// </summary>
 public class CloudProxyManager
 {
-    // Cloudflare proxy URLs
-    private static readonly string[] CloudflareProxies = new[]
-    {
-        "https://hoyoshadehub-glasses.pages.dev/",
-        "https://cdn.autumn.recipe.2dcd.cf.storage.hub.hoyosha.de",
-        "https://cdn.delicate.meadow.be18.cf.storage.hub.hoyosha.de",
-        "https://cdn.weathered.wave.q2c3.cf.storage.hub.hoyosha.de"
-    };
-
-    // Tencent Cloud proxy URLs
-    private static readonly string[] TencentCloudProxies = new[]
-    {
-        "https://cdn.green.sea.12ae.tx.storage.hub.hoyosha.de",
-        "https://cdn.jolly.snowflake.cd46.tx.storage.hub.hoyosha.de",
-        "https://cdn.bold.wood.c623.tx.storage.hub.hoyosha.de"
-    };
-
-    // Alibaba Cloud proxy URLs
-    private static readonly string[] AlibabaCloudProxies = new[]
-    {
-        "https://cdn.bold.wood.c623.ali.storage.hub.hoyosha.de",
-        "https://cdn.jolly.snowflake.cd46.ali.storage.hub.hoyosha.de",
-        "https://cdn.steep.pond.0c55.ali.storage.hub.hoyosha.de"
-    };
-
+    // Legacy private-service IDs 1..3 are retired and resolve to direct.
     // 公共 GitHub 加速代理（用户提供）。用法是 <前缀>/<原始 github 链接>。
-    // 这些是第三方服务，稳定性不如自家 CDN，所以各自单独一项、让用户按需选。
+    // 这些是独立第三方服务，由用户按需选择。
     private static readonly string[] GhProxyOrgProxies = ["https://gh-proxy.org"];
     private static readonly string[] GhFastTopProxies = ["https://ghfast.top"];
     private static readonly string[] GhProxyComProxies = ["https://gh-proxy.com"];
@@ -98,7 +74,7 @@ public class CloudProxyManager
     /// Get proxy URL prefix for the specified download server
     /// </summary>
     /// <param name="serverIndex">
-    /// 0=GitHub 直连, 1=Cloudflare, 2=腾讯云, 3=阿里云,
+    /// 0=GitHub 直连；1..3=已停用的私有线路（兼容映射到直连）；
     /// 4=gh-proxy.org, 5=ghfast.top, 6=gh-proxy.com, 7=github.akams.cn
     /// </param>
     /// <returns>代理前缀；GitHub 直连时为 null</returns>
@@ -107,9 +83,6 @@ public class CloudProxyManager
         return serverIndex switch
         {
             0 => null, // GitHub (Direct)
-            1 => GetRandomProxy(CloudflareProxies),
-            2 => GetRandomProxy(TencentCloudProxies),
-            3 => GetRandomProxy(AlibabaCloudProxies),
             4 => GetRandomProxy(GhProxyOrgProxies),
             5 => GetRandomProxy(GhFastTopProxies),
             6 => GetRandomProxy(GhProxyComProxies),
@@ -126,6 +99,8 @@ public class CloudProxyManager
     /// <returns>Proxied URL or original URL if proxy is null</returns>
     public static string ApplyProxy(string originalUrl, string? proxyUrl)
     {
+        HoYoShadeHub.Core.Networking.ForkNetworkPolicy.EnsureAllowed(originalUrl);
+        HoYoShadeHub.Core.Networking.ForkNetworkPolicy.EnsureAllowed(proxyUrl);
         if (string.IsNullOrWhiteSpace(proxyUrl))
         {
             return originalUrl;
@@ -137,15 +112,12 @@ public class CloudProxyManager
     /// <summary>
     /// Get all proxy URLs for a specific cloud provider
     /// </summary>
-    /// <param name="serverIndex">1=Cloudflare, 2=腾讯云, 3=阿里云, 4~7=公共 gh 代理</param>
+    /// <param name="serverIndex">1..3=已停用，4~7=公共 gh 代理</param>
     /// <returns>该服务器的候选代理前缀</returns>
     public static string[] GetAllProxiesForServer(int serverIndex)
     {
         return serverIndex switch
         {
-            1 => CloudflareProxies,
-            2 => TencentCloudProxies,
-            3 => AlibabaCloudProxies,
             4 => GhProxyOrgProxies,
             5 => GhFastTopProxies,
             6 => GhProxyComProxies,
@@ -159,32 +131,7 @@ public class CloudProxyManager
     /// </summary>
     public static int[] GetAutoSelectFallbackSequence(bool isLauncherUpdate)
     {
-        if (isLauncherUpdate)
-        {
-            // Launcher Update: Cloudflare -> Tencent -> Alibaba
-            return new[] { 1, 2, 3 };
-        }
-        else
-        {
-            // HoYoShade / ReShade：公共 gh 代理 -> 腾讯云 -> 随机(Cloudflare, 阿里云) -> GitHub 直连兜底。
-            // 三处都是冲着「别滥用」改的：
-            //   1) GitHub 直连放最后  国内基本连不上，排第一等于每次必然多一个失败请求；
-            //   2) 新加的 gh-proxy.org / ghfast.top 排最前（实测能转发 github，最可能成功）；
-            //   3) 刚失败过的服务器这次直接跳过（见 FilterCooldown）。
-            var sequence = new List<int> { 4, 5, 2 };
-            if (_random.Next(2) == 0)
-            {
-                sequence.Add(1);
-                sequence.Add(3);
-            }
-            else
-            {
-                sequence.Add(3);
-                sequence.Add(1);
-            }
-            sequence.Add(0);
-            return FilterCooldown(sequence);
-        }
+        return FilterCooldown(new List<int> { 0, 4, 5 });
     }
 
     /// <summary>
@@ -201,6 +148,7 @@ public class CloudProxyManager
         HttpClient httpClient,
         CancellationToken cancellationToken = default)
     {
+        HoYoShadeHub.Core.Networking.ForkNetworkPolicy.EnsureAllowed(originalUrl);
         // For GitHub direct, no fallback needed
         if (serverIndex == 0)
         {

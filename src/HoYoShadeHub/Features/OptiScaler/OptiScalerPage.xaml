@@ -60,9 +60,7 @@
                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
         </StackPanel>
 
-        <!--  第 2 条修回：**一个构建一张卡片，点一下就是单选**
-              （用户：以前是多个 opt 单选、点卡片就换；被改成「卡片里一个切换版本下拉」之后卡片点不动了）。
-              一个来源装了多版时，每版单独一张卡，标题里带版本号区分。  -->
+        <!-- 每个构建一张卡：标题、空白处或单选圈选择构建；配置控件只修改设置。 -->
         <!--  ItemsControl 没有内置滚动，所以用 ScrollViewer 包住（工具栏/标题固定，只有列表滚）  -->
         <ScrollViewer Grid.Row="2" Padding="0,0,6,0">
             <ItemsControl x:Name="OptiScalerSourceList">
@@ -87,7 +85,7 @@
                             BorderThickness="1"
                             CornerRadius="8"
                             Tapped="Card_Tapped"
-                            ToolTipService.ToolTip="点一下：这个游戏改用这一版（同一时间只有一个「使用中」）">
+                            ToolTipService.ToolTip="点击标题、空白处或单选圈选择此构建；下拉框只修改设置">
                     <Grid ColumnSpacing="8">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto" />
@@ -99,15 +97,16 @@
                             <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
 
-                        <!--  单选圈：只显示状态，不吃点击（点击交给整张卡片）  -->
+                        <!-- 单选圈是明确的选择动作，也支持键盘；状态在保存成功后更新。 -->
                         <RadioButton Grid.Column="0"
                                      Grid.Row="0"
                                      MinWidth="0"
                                      Padding="0,0,4,0"
                                      VerticalAlignment="Center"
-                                     GroupName="OptiScalerBuild"
+                                     Click="Button_SelectBuild_Click"
                                      IsChecked="{x:Bind IsInUse, Mode=OneWay}"
-                                     IsHitTestVisible="False" />
+                                     IsEnabled="{x:Bind SettingsEnabled, Mode=OneWay}"
+                                     AutomationProperties.Name="选择此 OptiScaler 构建" />
 
                         <StackPanel Grid.Column="1" Grid.Row="0" Spacing="6">
                             <!--  第一行：来源 + 版本 + 标签 + 「使用中」  -->
@@ -141,26 +140,27 @@
                                        Text="{x:Bind Detail, Mode=OneWay}"
                                        TextTrimming="CharacterEllipsis" />
 
-                            <!--  第三行：当前配置  -->
-                            <StackPanel Orientation="Horizontal" Spacing="6">
+                            <!-- 配置区的空白和说明文字也不参与构建选择。 -->
+                            <StackPanel Orientation="Horizontal" Spacing="6" Tapped="Settings_Tapped">
 
                                 <TextBlock VerticalAlignment="Center" Style="{ThemeResource CaptionTextBlockStyle}" Text="当前配置：" />
                                 <ComboBox MinWidth="160"
+                                          IsEnabled="{x:Bind SettingsEnabled, Mode=OneWay}"
                                           ItemsSource="{x:Bind PresetOptions, Mode=OneWay}"
                                           SelectedItem="{x:Bind CurrentPreset, Mode=TwoWay}" />
-                                <Button Padding="8,2" Click="Button_PresetAdd_Click" ToolTipService.ToolTip="新增配置（空配置 / 复制现有 / 从网络下载 / 从文件导入 ini·zip）">
+                                <Button Padding="8,2" Click="Button_PresetAdd_Click" IsEnabled="{x:Bind SettingsEnabled, Mode=OneWay}" ToolTipService.ToolTip="新增配置（空配置 / 复制现有 / 从网络下载 / 从文件导入 ini·zip）">
                                     <FontIcon FontSize="14" Glyph="&#xE710;" />
                                 </Button>
-                                <Button Padding="8,2" Click="Button_PresetOpenFile_Click" ToolTipService.ToolTip="修改：用编辑器打开这份配置">
+                                <Button Padding="8,2" Click="Button_PresetOpenFile_Click" IsEnabled="{x:Bind SettingsEnabled, Mode=OneWay}" ToolTipService.ToolTip="修改：用编辑器打开这份配置">
                                     <FontIcon FontSize="14" Glyph="&#xE70F;" />
                                 </Button>
-                                <Button Padding="10,2" Click="Button_PresetRename_Click" Content="重命名" />
+                                <Button Padding="10,2" Click="Button_PresetRename_Click" IsEnabled="{x:Bind SettingsEnabled, Mode=OneWay}" Content="重命名" />
                                 <TextBlock VerticalAlignment="Center"
                                            Foreground="{ThemeResource TextFillColorTertiaryBrush}"
                                            Style="{ThemeResource CaptionTextBlockStyle}"
                                            Text="{x:Bind CurrentProfileText}"
                                            TextTrimming="CharacterEllipsis" />
-                                <ComboBox x:Name="ComboBox_NrVersion" Width="160" VerticalAlignment="Center" Loaded="ComboBox_Nr_Loaded" DropDownOpened="ComboBox_Nr_DropDownOpened" SelectionChanged="ComboBox_Nr_SelectionChanged" IsEnabled="{x:Bind HasQuickConfig, Mode=OneWay}" ToolTipService.ToolTip="选择本游戏 NR 版本；选择后立即保存，重启游戏生效" AutomationProperties.Name="NR 版本" />
+                                <ComboBox x:Name="ComboBox_NrVersion" Width="160" VerticalAlignment="Center" Loaded="ComboBox_Nr_Loaded" SelectionChanged="ComboBox_Nr_SelectionChanged" IsEnabled="{x:Bind SettingsEnabled, Mode=OneWay}" ToolTipService.ToolTip="选择本游戏 NR 版本；选择后立即保存，重启游戏生效" AutomationProperties.Name="NR 版本" />
                                 </StackPanel>
                             </StackPanel>
 
@@ -175,6 +175,7 @@
                                     Background="Transparent"
                                     BorderThickness="0"
                                     Click="Button_ExpandQuick_Click"
+                                    IsEnabled="{x:Bind SettingsEnabled, Mode=OneWay}"
                                     Tag="{x:Bind}"
                                     ToolTipService.ToolTip="展开扩展配置（FG / NR / Hook 等 20 项快捷开关）"
                                     Visibility="{x:Bind ExpandButtonVisibility, Mode=OneWay}">
@@ -189,6 +190,7 @@
                                     Background="Transparent"
                                     BorderThickness="0"
                                     Click="Button_ExpandQuick_Click"
+                                    IsEnabled="{x:Bind SettingsEnabled, Mode=OneWay}"
                                     Tag="{x:Bind}"
                                     ToolTipService.ToolTip="缩回去"
                                     Visibility="{x:Bind CollapseButtonVisibility, Mode=OneWay}">
@@ -196,7 +198,7 @@
                             </Button>
 
                             <!--  扩展配置：20 项快捷开关，写进当前配置（或 profile）  -->
-                            <StackPanel x:Name="OptiQuickConfig" Grid.Row="1"
+                            <StackPanel x:Name="OptiQuickConfig" Grid.Row="1" Tapped="Settings_Tapped"
                                         Grid.ColumnSpan="3"
                                         Margin="0,6,0,0"
                                         Spacing="6"
@@ -222,6 +224,7 @@
                                                 <!--  三态：auto / 开 / 关  -->
                                                 <ComboBox Grid.Column="1"
                                                           MinWidth="170"
+                                                          IsEnabled="{x:Bind CanEdit, Mode=OneWay}"
                                                           SelectedIndex="{x:Bind TriIndex, Mode=TwoWay}"
                                                           Visibility="{x:Bind TriVisibility, Mode=OneWay}">
                                                     <ComboBoxItem Content="auto（默认）" />
@@ -231,6 +234,7 @@
                                                 <!--  选项：从给定取值里选  -->
                                                 <ComboBox Grid.Column="1"
                                                           MinWidth="170"
+                                                          IsEnabled="{x:Bind CanEdit, Mode=OneWay}"
                                                           DisplayMemberPath="Label"
                                                           ItemsSource="{x:Bind Choices, Mode=OneWay}"
                                                           SelectedIndex="{x:Bind OptionIndex, Mode=TwoWay}"
@@ -238,6 +242,7 @@
                                                 <!--  数字  -->
                                                 <NumberBox Grid.Column="1"
                                                            MinWidth="170"
+                                                           IsEnabled="{x:Bind CanEdit, Mode=OneWay}"
                                                            Maximum="{x:Bind NumberMaximum}"
                                                            Minimum="{x:Bind NumberMinimum}"
                                                            SpinButtonPlacementMode="Compact"

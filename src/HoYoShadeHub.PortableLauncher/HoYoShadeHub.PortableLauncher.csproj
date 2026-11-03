@@ -8,6 +8,10 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
     <AssemblyName>HoYoShadeHub</AssemblyName>
+    <Product>F6 Launcher</Product>
+    <Title>F6 Launcher - Unofficial fork</Title>
+    <Company>thx114</Company>
+    <Copyright>Copyright (c) 2025 哆啦D夢|DuolaD; modifications (c) 2026 thx114</Copyright>
     <RootNamespace>HoYoShadeHub.PortableLauncher</RootNamespace>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>

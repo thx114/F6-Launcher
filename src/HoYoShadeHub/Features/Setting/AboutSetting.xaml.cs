@@ -98,9 +98,9 @@ public sealed partial class AboutSetting : PageBase
         {
             [-1] = Lang.HoYoShadeDownloadView_Server_AutoSelect,
             [0] = Lang.HoYoShadeDownloadView_Server_GithubDirect,
-            [1] = AppConfig.EnableEch ? "Cloudflare ECH" : Lang.HoYoShadeDownloadView_Server_Cloudflare,
-            [2] = Lang.HoYoShadeDownloadView_Server_TencentCloud,
-            [3] = Lang.HoYoShadeDownloadView_Server_AlibabaCloud,
+
+
+
         }))
         {
             DownloadServers.Add(server);
@@ -397,7 +397,7 @@ public sealed partial class AboutSetting : PageBase
             // If AutoSelect (-1), we can just try Cloudflare (1) for metadata check.
             if (serverIndex == -1)
             {
-                proxyUrl = LauncherUpdateProxyManager.GetProxyUrl(1); // Default to Cloudflare for metadata
+                proxyUrl = null; // Direct fork-owned metadata.
             }
             
             // Pass proxy URL to CheckUpdateAsync

@@ -39,6 +39,8 @@
             <StackPanel>
 
             <!--  欢迎  -->
+            <TextBlock Margin="12,8,12,0" TextWrapping="Wrap"
+                       Text="F6 Launcher · 非官方分支 / Unofficial fork · 基于 HoYoShade Hub 修改" />
             <TextBlock Margin="{x:Bind GetMargin(12)}"
                        FontSize="24"
                        Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"

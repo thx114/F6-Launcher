@@ -111,7 +111,7 @@ public sealed partial class WelcomeView : UserControl
     {
         try
         {
-            Uri targetUri = new Uri("https://hoyosha.de/");
+            Uri targetUri = new Uri("https://github.com/thx114/HoYoShadeHub-DLSS5");
             Uri? proxy = HttpClient.DefaultProxy.GetProxy(targetUri);
             if (proxy is not null && proxy != targetUri)
             {

@@ -98,13 +98,13 @@ public class ReleaseCommand
             Architecture = arch,
             InstallType = type,
             BuildTime = buildTime,
-            ManifestUrl = $"https://cdn.cf.storage.hub.hoyosha.de/release/manifest/{manifestName}.json",
+            ManifestUrl = $"{ReleaseEndpoints.BaseUrl}/manifest/{manifestName}.json",
         };
 
         if (File.Exists(package))
         {
             byte[] bytes = await File.ReadAllBytesAsync(package);
-            detail.PackageUrl = $"https://cdn.cf.storage.hub.hoyosha.de/release/package/{Path.GetFileName(package)}";
+            detail.PackageUrl = $"{ReleaseEndpoints.BaseUrl}/package/{Path.GetFileName(package)}";
             detail.PackageSize = bytes.Length;
             detail.PackageHash = Convert.ToHexStringLower(SHA256.HashData(bytes));
         }
@@ -114,7 +114,7 @@ public class ReleaseCommand
             byte[] bytes = await File.ReadAllBytesAsync(setupPackage);
             detail.Setup = new ReleaseSetup
             {
-                Url = $"https://cdn.cf.storage.hub.hoyosha.de/release/package/{Path.GetFileName(setupPackage)}",
+                Url = $"{ReleaseEndpoints.BaseUrl}/package/{Path.GetFileName(setupPackage)}",
                 FileName = Path.GetFileName(setupPackage),
                 Size = bytes.Length,
                 Hash = Convert.ToHexStringLower(SHA256.HashData(bytes)),
@@ -129,7 +129,7 @@ public class ReleaseCommand
                 var diff = new ReleaseInfoDiff
                 {
                     DiffVersion = diffVersion,
-                    ManifestUrl = $"https://cdn.cf.storage.hub.hoyosha.de/release/manifest/{manifestName}_diff_{diffVersion}.json",
+                    ManifestUrl = $"{ReleaseEndpoints.BaseUrl}/manifest/{manifestName}_diff_{diffVersion}.json",
                 };
                 detail.Diffs.Add(diffVersion, diff);
             }

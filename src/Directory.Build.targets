@@ -1,0 +1,7 @@
+<Project>
+  <!-- Preserve attribution even when publishing directly without package.ps1. -->
+  <ItemGroup Condition="'$(MSBuildProjectName)' == 'HoYoShadeHub' Or '$(MSBuildProjectName)' == 'HoYoShadeHub.PortableLauncher' Or '$(MSBuildProjectName)' == 'HoYoShadeHub.Setup' Or '$(MSBuildProjectName)' == 'HoYoShadeHub.RPC'">
+    <None Include="$(MSBuildThisFileDirectory)..\LICENSE;$(MSBuildThisFileDirectory)..\Starward_LICENSE;$(MSBuildThisFileDirectory)..\NOTICE.md"
+          Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Always" ExcludeFromSingleFile="true" />
+  </ItemGroup>
+</Project>

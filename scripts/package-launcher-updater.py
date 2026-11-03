@@ -19,14 +19,14 @@ def main():
         if hashlib.file_digest(stream, 'sha256').hexdigest().upper() != receipt['sha256'].upper():
             raise ValueError('Full archive identity changed')
     version = receipt['version']
-    output = full.with_name(f'HoYoShadeHub_Portable_{version}_{receipt["architecture"]}.zip')
+    output = full.with_name(f'F6Launcher_Portable_{version}_{receipt["architecture"]}.zip')
     partial = output.with_suffix('.zip.partial')
     if output.exists() or partial.exists():
         raise ValueError('Updater output already exists')
     rows = {}
     with zipfile.ZipFile(full) as source, zipfile.ZipFile(partial, 'x', zipfile.ZIP_DEFLATED, compresslevel=6) as target:
         for info in source.infolist():
-            if info.is_dir() or not (info.filename in ('HoYoShadeHub.exe', 'version.ini') or info.filename.startswith(f'app-{version}/')):
+            if info.is_dir() or not (info.filename in ('HoYoShadeHub.exe', 'F6Launcher.exe', 'version.ini', 'LICENSE', 'Starward_LICENSE', 'NOTICE.md') or info.filename.startswith(f'app-{version}/')):
                 continue
             sha = hashlib.sha256()
             with source.open(info) as incoming, target.open(info.filename, 'w', force_zip64=True) as outgoing:
@@ -34,7 +34,7 @@ def main():
                     outgoing.write(chunk)
                     sha.update(chunk)
             rows[info.filename] = sha.hexdigest()
-    required = {'HoYoShadeHub.exe', 'version.ini', f'app-{version}/HoYoShadeHub.exe'}
+    required = {'HoYoShadeHub.exe', 'F6Launcher.exe', 'version.ini', 'LICENSE', 'Starward_LICENSE', 'NOTICE.md', f'app-{version}/HoYoShadeHub.exe'}
     if not required.issubset(rows):
         raise ValueError('Missing application entry')
     with zipfile.ZipFile(partial) as target:

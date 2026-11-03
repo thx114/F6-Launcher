@@ -1,4 +1,4 @@
-﻿using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.ComponentModel;
 using HoYoShadeHub.Core.HoYoPlay;
 using HoYoShadeHub.Extensions.OptiScaler;
 using HoYoShadeHub.Extensions.Dlls;
@@ -11,6 +11,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Navigation;
+using Microsoft.UI.Xaml.Media;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -23,8 +24,7 @@ using System.Threading.Tasks;
 namespace HoYoShadeHub.Features.OptiScaler;
 
 /// <summary>
-/// OptiScaler 页里的一张「来源」卡片：这个来源在本地装了哪几版，
-/// 用卡片里的「切换版本」下拉给这个游戏选一版（用户要求第 2 条：不要再套娃）。
+/// OptiScaler 页里的一张构建卡片；设置编辑与本游戏的构建选择相互独立。
 /// </summary>
 public sealed partial class OptiScalerBuildItemViewModel : ObservableObject
 {
@@ -111,14 +111,29 @@ public sealed partial class OptiScalerBuildItemViewModel : ObservableObject
         : (string.IsNullOrWhiteSpace(build.DllPath) ? $"目录：{build.Directory}" : $"注入：{build.DllPath}");
 
     public Visibility DllMissingVisibility =>
-        string.IsNullOrWhiteSpace(DllPath) ? Visibility.Visible : Visibility.Collapsed;
+        string.IsNullOrWhiteSpace(CurrentBuild?.DllPath) ? Visibility.Visible : Visibility.Collapsed;
 
     /// <summary>这个构建的目录（套配置要往它的 profiles\ 里写；没 dll 就没有）</summary>
     public string? BuildDirectory
         => CurrentBuild?.DllPath is { Length: > 0 } source ? Path.GetDirectoryName(source) : null;
 
     /// <summary>卡片上显示的「当前文件」说明（profiles\<游戏>.ini 是否存在 / 何时改的）</summary>
-    public string CurrentProfileText { get; set; } = string.Empty;
+    [ObservableProperty]
+    private string currentProfileText = string.Empty;
+
+    private bool _isBusy;
+    public bool IsBusy
+    {
+        get => _isBusy;
+        set
+        {
+            if (!SetProperty(ref _isBusy, value)) return;
+            OnPropertyChanged(nameof(SettingsEnabled));
+            foreach (var quick in QuickItems) quick.CanEdit = !value;
+        }
+    }
+
+    public bool SettingsEnabled => HasQuickConfig && !IsBusy;
 
     /// <summary>换版本时回调页面（页面用 _loading 屏蔽加载期的那次）</summary>
     internal Action<OptiScalerBuildItemViewModel, string?>? BuildChanged { get; set; }
@@ -186,10 +201,13 @@ public sealed partial class OptiScalerBuildItemViewModel : ObservableObject
         OnPropertyChanged(nameof(Detail));
         OnPropertyChanged(nameof(DllMissingVisibility));
         OnPropertyChanged(nameof(BuildDirectory));
+        OnPropertyChanged(nameof(HasQuickConfig));
+        OnPropertyChanged(nameof(SettingsEnabled));
     }
 
     /// <summary>「当前配置」下拉的选项：不套配置 + 本地配置名</summary>
-    public List<string> PresetOptions { get; set; } = [];
+    [ObservableProperty]
+    private List<string> presetOptions = [];
 
     private string? _currentPreset;
 
@@ -219,7 +237,6 @@ public sealed partial class OptiScalerBuildItemViewModel : ObservableObject
         OnPropertyChanged(nameof(ExpandedVisibility));
         OnPropertyChanged(nameof(ExpandButtonVisibility));
         OnPropertyChanged(nameof(CollapseButtonVisibility));
-        if (value) QuickReloadRequested?.Invoke(this);
     }
 
     public Visibility ExpandedVisibility => Expanded ? Visibility.Visible : Visibility.Collapsed;
@@ -231,9 +248,6 @@ public sealed partial class OptiScalerBuildItemViewModel : ObservableObject
     /// <summary>这个卡片能不能展开配置（没有可用构建目录就不行）</summary>
     public bool HasQuickConfig => !string.IsNullOrWhiteSpace(BuildDirectory);
 
-    /// <summary>展开时通知页面重新读当前值</summary>
-    internal Action<OptiScalerBuildItemViewModel>? QuickReloadRequested { get; set; }
-
     /// <summary>扩展配置项（20 项，静态清单见 <see cref="OptiScalerQuickOptions"/>）</summary>
     public ObservableCollection<OptiQuickItemViewModel> QuickItems { get; } = [];
 }
@@ -242,11 +256,11 @@ public sealed partial class OptiScalerBuildItemViewModel : ObservableObject
 public sealed partial class OptiQuickItemViewModel : ObservableObject
 {
     private readonly OptiQuickDescriptor _descriptor;
-    private readonly Func<OptiQuickDescriptor, string, bool> _commit;
+    private readonly Func<OptiQuickDescriptor, string, Task<bool>> _commit;
     private bool _suppress;
     private string _lastValue = "auto";
 
-    internal OptiQuickItemViewModel(OptiQuickDescriptor descriptor, Func<OptiQuickDescriptor, string, bool> commit)
+    internal OptiQuickItemViewModel(OptiQuickDescriptor descriptor, Func<OptiQuickDescriptor, string, Task<bool>> commit)
     {
         _descriptor = descriptor;
         _commit = commit;
@@ -258,6 +272,9 @@ public sealed partial class OptiQuickItemViewModel : ObservableObject
     public IReadOnlyList<OptiQuickChoice> Choices => _descriptor.Choices ?? [];
     public double NumberMinimum => _descriptor.NumberMin;
     public double NumberMaximum => _descriptor.NumberMax;
+
+    [ObservableProperty]
+    private bool canEdit = true;
 
     public Visibility TriVisibility => _descriptor.Kind == OptiQuickKind.TriState ? Visibility.Visible : Visibility.Collapsed;
     public Visibility OptionVisibility => _descriptor.Kind == OptiQuickKind.Option ? Visibility.Visible : Visibility.Collapsed;
@@ -296,10 +313,10 @@ public sealed partial class OptiQuickItemViewModel : ObservableObject
         }
     }
 
-    private void Commit(string value)
+    private async void Commit(string value)
     {
         if (_suppress) return;
-        if (_commit(_descriptor, value)) _lastValue = value;
+        if (await _commit(_descriptor, value)) _lastValue = value;
         else LoadValue(_lastValue);
     }
 
@@ -360,6 +377,23 @@ public sealed partial class OptiScalerPage : PageBase
     private GameId? _gameId;
     private bool _loading;
     private readonly LatestAsyncOperation _loadOperation = new();
+    // Keep this page's file transactions in order, including a refresh during a pending save.
+    private readonly SemaphoreSlim _ioGate = new(1, 1);
+    private List<string> _nrVersions = [];
+    private string? _selectedNrVersion;
+    private bool _selectingBuild;
+
+    private async Task<T> RunIoAsync<T>(Func<T> action, CancellationToken token)
+    {
+        await _ioGate.WaitAsync(token);
+        // Lock order: page gate -> shared NR/DLL queue. Actions call plain library methods,
+        // never GameNrRuntimeService or another entry point that acquires the shared queue.
+        try { return await NrRuntimeWorkQueue.RunAsync(action, token); }
+        finally { _ioGate.Release(); }
+    }
+
+    private bool IsCurrentItem(OptiScalerBuildItemViewModel item, GameId game, long generation)
+        => IsPageGenerationCurrent(generation) && ReferenceEquals(game, _gameId) && _items.Contains(item);
 
     public OptiScalerPage()
     {
@@ -390,8 +424,8 @@ public sealed partial class OptiScalerPage : PageBase
         return root.Length == 0 ? null : new OptiScalerLibrary(root);
     }
 
-    private sealed record BuildSnapshot(OptiScalerBuild Build, OptiScalerSource? Source,
-        List<string> Presets, string ProfileText);
+    private sealed record PresetSnapshot(List<string> Options, string Current, string ProfileText);
+    private sealed record BuildSnapshot(OptiScalerBuild Build, OptiScalerSource? Source, PresetSnapshot Preset);
 
     private async void Load()
     {
@@ -410,13 +444,13 @@ public sealed partial class OptiScalerPage : PageBase
             TextBlock_Game.Text = string.IsNullOrWhiteSpace(gameName) ? "（没选游戏）" : $"这个游戏：{gameName}";
 
             OptiScalerLibrary? library = CreateLibrary();
-            string? selectedId = gameId is null ? null : AppConfig.GetSelectedOptiScalerId(gameId);
             string? gameKey = gameId?.GameBiz.ToString();
-            bool migrate = gameId is not null && string.IsNullOrWhiteSpace(selectedId)
-                && AppConfig.GetUseOptiScalerLaunchOption(gameId);
             TextBlock_Status.Text = "正在读取本地 OptiScaler 构建…";
-            var snapshot = await Task.Run(() =>
+            var snapshot = await RunIoAsync(() =>
             {
+                string? selectedId = gameId is null ? null : AppConfig.GetSelectedOptiScalerId(gameId);
+                bool migrate = gameId is not null && string.IsNullOrWhiteSpace(selectedId)
+                    && AppConfig.GetUseOptiScalerLaunchOption(gameId);
                 var rows = new List<BuildSnapshot>();
                 var catalog = OptiScalerCatalog.LoadFile(RemoteCatalogService.OptiScalerCachePath);
                 var presets = OptiScalerPresets.List()
@@ -424,31 +458,29 @@ public sealed partial class OptiScalerPage : PageBase
                 foreach (var build in library?.List(includeDirectorySize: false, cancellationToken: operation.Token) ?? [])
                 {
                     operation.Token.ThrowIfCancellationRequested();
-                    string? profile = build.DllPath is { } dll && gameKey is not null
-                        ? OptiScalerProfiles.ProfilePath(Path.GetDirectoryName(dll)!, gameKey) : null;
-                    string profileText;
-                    try
-                    {
-                        profileText = profile is null ? "当前文件：这个构建没有可用目录"
-                            : File.Exists(profile)
-                                ? $"当前文件：profiles\\{Path.GetFileName(profile)}  {File.GetLastWriteTime(profile):yyyy-MM-dd HH:mm}"
-                                : "当前文件：还没有 profiles 配置（首次启动游戏时生成）";
-                    }
-                    catch { profileText = "当前文件：读不到"; }
+                    string? buildDirectory = build.DllPath is { } dll ? Path.GetDirectoryName(dll) : null;
+                    List<string> options = [OptiScalerPresets.CurrentLabel, .. presets.Where(p => p.Sources.Count == 0
+                        || p.Sources.Contains(build.SourceId, StringComparer.OrdinalIgnoreCase)).Select(p => p.Name)];
                     rows.Add(new(build, OptiScalerCatalog.Find(catalog, build.SourceId),
-                        [OptiScalerPresets.CurrentLabel, .. presets.Where(p => p.Sources.Count == 0
-                            || p.Sources.Contains(build.SourceId, StringComparer.OrdinalIgnoreCase)).Select(p => p.Name)], profileText));
+                        ReadPresetSnapshot(build.SourceId, buildDirectory, gameKey, options)));
                 }
                 var legacy = migrate ? library?.GetSelected(includeDirectorySize: false, cancellationToken: operation.Token) : null;
-                return (Rows: rows, Legacy: legacy);
+                operation.Token.ThrowIfCancellationRequested();
+                if (migrate && gameId is not null)
+                {
+                    OptiScalerMigration.Run(gameId, legacy);
+                    selectedId = AppConfig.GetSelectedOptiScalerId(gameId);
+                }
+                var nrVersions = NrRuntimeLibrary.SelectableVersions(new DllVersionStore(AppConfig.CacheRoot).ListVersions("dlssnr")
+                    .Where(v => File.Exists(Path.Combine(v.Directory, NrRuntimeLibrary.FileName)))
+                    .Select(v => v.Version), AppConfig.IsNrVersionEnabled).ToList();
+                string? nr = gameId is null ? null : AppConfig.GetGameNrVersion(gameId, "opti");
+                return (Rows: rows, SelectedId: selectedId, NrVersions: nrVersions, Nr: nr);
             }, operation.Token);
             if (!operation.IsCurrent || !ReferenceEquals(gameId, _gameId)) return;
-            if (migrate && gameId is not null)
-            {
-                OptiScalerMigration.Run(gameId, snapshot.Legacy);
-                selectedId = AppConfig.GetSelectedOptiScalerId(gameId);
-            }
 
+            _nrVersions = snapshot.NrVersions;
+            _selectedNrVersion = snapshot.Nr;
             if (library is not null)
             {
                 // 一个构建一张卡片，点一下就是单选（用户：以前多个 opt 单选、点卡片就换）。
@@ -467,11 +499,9 @@ public sealed partial class OptiScalerPage : PageBase
                         TagsText = source?.Tags is { Length: > 0 } tags ? string.Join(" ", tags) : string.Empty,
                     };
 
-                    item.SetBuilds([build], selectedId);
+                    item.SetBuilds([build], snapshot.SelectedId);
                     item.BuildChanged = OnBuildChanged;
-                    EnsureQuickItems(item);
-                    AttachPreset(item, row.Presets, row.ProfileText);
-                    ReloadQuickValues(item);
+                    AttachPreset(item, row.Preset);
                     _items.Add(item);
                 }
             }
@@ -484,7 +514,7 @@ public sealed partial class OptiScalerPage : PageBase
 
             OptiScalerBuildItemViewModel? inUse = _items.FirstOrDefault(i => i.IsInUse);
             TextBlock_Status.Text = inUse is null
-                ? "这个游戏还没选构建 —— 在卡片里「切换版本」选一个才会注入。"
+                ? "这个游戏还没选构建 —— 点击卡片标题、空白处或单选圈选择。"
                 : $"这个游戏用：{inUse.Title} · {inUse.SelectedBuildOption}";
             MotionAnimations.PlayListEntrance(OptiScalerSourceList);
             _logger.LogInformation("OptiScaler page loaded {Count} builds for {Game}", _items.Count, gameName);
@@ -543,105 +573,147 @@ public sealed partial class OptiScalerPage : PageBase
                 : $"OptiScaler 注入：等游戏起来 {seconds} 秒后再注入。";
     }
 
-    /// <summary>
-    /// 点整张卡片 = 这个游戏改用这一版（单选，和以前那个 ListView 单选是一个意思）。
-    /// 卡片里的下拉 / 按钮自己会吃掉点击，所以只有点卡片空白处才会走到这里。
-    /// </summary>
-    private void ComboBox_Nr_Loaded(object sender, RoutedEventArgs e)
+    // Version discovery belongs to Load's background snapshot. Opening a picker only binds memory.
+    private void FillNrPicker(ComboBox combo)
     {
-        if (sender is ComboBox combo && _gameId is { } game)
-            NrVersionPicker.Fill(combo, AppConfig.GetGameNrVersion(game, "opti"));
+        combo.Tag = true;
+        try
+        {
+            combo.Items.Clear();
+            combo.Items.Add(new ComboBoxItem { Content = "NR：默认" });
+            foreach (string version in _nrVersions)
+                combo.Items.Add(new ComboBoxItem { Content = "NR：" + version, Tag = version });
+            int index = _selectedNrVersion is null ? 0
+                : _nrVersions.FindIndex(v => string.Equals(v, _selectedNrVersion, StringComparison.OrdinalIgnoreCase)) + 1;
+            if (_selectedNrVersion is not null && index == 0)
+            {
+                combo.Items.Add(new ComboBoxItem { Content = "NR：" + _selectedNrVersion + "（不可选）",
+                    Tag = _selectedNrVersion, IsEnabled = false });
+                index = combo.Items.Count - 1;
+            }
+            combo.SelectedIndex = index;
+        }
+        finally { combo.Tag = false; }
     }
 
-    private void ComboBox_Nr_DropDownOpened(object sender, object e) => ComboBox_Nr_Loaded(sender, new RoutedEventArgs());
+    private void ComboBox_Nr_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is ComboBox combo) FillNrPicker(combo);
+    }
 
     private async void ComboBox_Nr_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (sender is not ComboBox combo || combo.Tag is not false || combo.SelectedItem is not ComboBoxItem { IsEnabled: true } selected) return;
-        if (_gameId is not { } game || _loading || sender is not FrameworkElement { DataContext: OptiScalerBuildItemViewModel item }
+        if (sender is not ComboBox combo || combo.Tag is not false
+            || combo.SelectedItem is not ComboBoxItem { IsEnabled: true } selected) return;
+        if (_gameId is not { } game || _loading
+            || combo.DataContext is not OptiScalerBuildItemViewModel item || item.IsBusy
             || item.CurrentBuild?.DllPath is not { } dll) return;
         string? version = selected.Tag as string;
-        if (string.Equals(version, AppConfig.GetGameNrVersion(game, "opti"), StringComparison.OrdinalIgnoreCase)) return;
-        combo.IsEnabled = false;
+        if (string.Equals(version, _selectedNrVersion, StringComparison.OrdinalIgnoreCase)) return;
+        long generation = PageGeneration;
+        string buildId = item.CurrentBuildId;
+        item.IsBusy = true;
         try
         {
-            if (version is not null || Directory.Exists(NrRuntimeLibrary.OptiDirectory(AppConfig.CacheRoot, game.GameBiz.Value, item.CurrentBuildId)))
-                await Task.Run(() => NrRuntimeLibrary.PrepareOpti(AppConfig.CacheRoot, game.GameBiz.Value, item.CurrentBuildId, dll, version));
-            if (_gameId?.GameBiz != game.GameBiz) return;
-            AppConfig.SetGameNrVersion(game, "opti", version);
-            OnBuildChanged(item, item.CurrentBuildId);
+            await RunIoAsync(() =>
+            {
+                if (version is not null || Directory.Exists(NrRuntimeLibrary.OptiDirectory(AppConfig.CacheRoot, game.GameBiz.Value, buildId)))
+                    NrRuntimeLibrary.PrepareOpti(AppConfig.CacheRoot, game.GameBiz.Value, buildId, dll, version);
+                AppConfig.SetGameNrVersion(game, "opti", version);
+                return true;
+            }, PageCancellationToken);
+            if (!IsCurrentItem(item, game, generation)) return;
+            _selectedNrVersion = version;
+            // NR is a per-game setting. Editing an unused card must never select or enable it.
             foreach (var row in _items) row.RefreshNrChoice();
-            NrVersionPicker.RefreshInline(this, version);
+            RefreshNrPickers(OptiScalerSourceList);
             TextBlock_Status.Text = "本游戏 OptiScaler NR：" + (version ?? "构建默认") + "（重启游戏生效）";
         }
-        catch (Exception ex) { TextBlock_Status.Text = "NR 版本切换失败：" + ex.Message; }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            if (IsCurrentItem(item, game, generation)) TextBlock_Status.Text = "NR 版本切换失败：" + ex.Message;
+        }
         finally
         {
-            NrVersionPicker.Fill(combo, AppConfig.GetGameNrVersion(game, "opti"));
-            combo.IsEnabled = item.HasQuickConfig;
+            if (IsCurrentItem(item, game, generation)) FillNrPicker(combo);
+            item.IsBusy = false;
         }
     }
+
+    private void RefreshNrPickers(DependencyObject root)
+    {
+        if (root is ComboBox { Name: "ComboBox_NrVersion" } combo) { FillNrPicker(combo); return; }
+        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+            RefreshNrPickers(VisualTreeHelper.GetChild(root, i));
+    }
+
+    private void Settings_Tapped(object sender, Microsoft.UI.Xaml.Input.TappedRoutedEventArgs e)
+        => e.Handled = true;
 
     private void Card_Tapped(object sender, Microsoft.UI.Xaml.Input.TappedRoutedEventArgs e)
     {
-        if (_loading || _gameId is null
-            || sender is not FrameworkElement { DataContext: OptiScalerBuildItemViewModel item })
+        if (sender is not FrameworkElement card) return;
+        // Tapped bubbles independently of Click/SelectionChanged. Check the original visual
+        // ancestry as well as the settings panels, including NumberBox template children.
+        DependencyObject? source = e.OriginalSource as DependencyObject;
+        while (source is not null && !ReferenceEquals(source, card))
         {
-            return;
+            if (source is Control) return;
+            source = VisualTreeHelper.GetParent(source);
         }
-
-        OnBuildChanged(item, item.CurrentBuildId);
+        if (!ReferenceEquals(source, card) || card.DataContext is not OptiScalerBuildItemViewModel item) return;
         e.Handled = true;
+        OnBuildChanged(item, item.CurrentBuildId);
     }
 
-    /// <summary>某张卡片被选中（点卡片 / 从下拉里换）：给这个游戏选这个构建</summary>
-    private void OnBuildChanged(OptiScalerBuildItemViewModel item, string? buildId)
+    private void Button_SelectBuild_Click(object sender, RoutedEventArgs e)
     {
-        if (_loading || _gameId is null)
+        if (sender is FrameworkElement { DataContext: OptiScalerBuildItemViewModel item })
         {
-            return;
+            // RadioButton toggles before Click, but persistence may fail or still be pending.
+            if (sender is RadioButton radio) radio.IsChecked = item.IsInUse;
+            OnBuildChanged(item, item.CurrentBuildId);
         }
+    }
 
-        if (string.IsNullOrWhiteSpace(buildId))
-        {
-            return;
-        }
-
+    /// <summary>Only an explicit card/radio action selects and enables this build.</summary>
+    private async void OnBuildChanged(OptiScalerBuildItemViewModel item, string? buildId)
+    {
+        if (_loading || _selectingBuild || item.IsBusy || _gameId is not { } game
+            || string.IsNullOrWhiteSpace(buildId) || !_items.Contains(item)) return;
+        if (item.IsInUse && AppConfig.GetUseOptiScalerLaunchOption(game)) return;
+        long generation = PageGeneration;
+        string? original = item.CurrentBuild?.DllPath;
+        var library = CreateLibrary();
+        _selectingBuild = true;
+        item.IsBusy = true;
         try
         {
-            string? nr = AppConfig.GetGameNrVersion(_gameId, "opti");
-            if ((nr is not null || Directory.Exists(NrRuntimeLibrary.OptiDirectory(AppConfig.CacheRoot, _gameId.GameBiz.Value, buildId)))
-                && item.CurrentBuild?.DllPath is { } original)
-                NrRuntimeLibrary.PrepareOpti(AppConfig.CacheRoot, _gameId.GameBiz.Value, buildId, original, nr);
+            await RunIoAsync(() =>
+            {
+                string? nr = AppConfig.GetGameNrVersion(game, "opti");
+                if (original is not null && (nr is not null
+                    || Directory.Exists(NrRuntimeLibrary.OptiDirectory(AppConfig.CacheRoot, game.GameBiz.Value, buildId))))
+                    NrRuntimeLibrary.PrepareOpti(AppConfig.CacheRoot, game.GameBiz.Value, buildId, original, nr);
+                AppConfig.SetOptiScalerVersion(game, buildId);
+                AppConfig.SetUseOptiScalerLaunchOption(game, true);
+                // Select validates the library by enumerating it. Keep that work off the UI thread.
+                try { library?.Select(buildId); }
+                catch (Exception ex) { _logger.LogWarning(ex, "Sync global OptiScaler selection"); }
+                return true;
+            }, PageCancellationToken);
+            if (!IsCurrentItem(item, game, generation)) return;
+            foreach (var other in _items) other.IsInUse = ReferenceEquals(other, item);
+            TextBlock_Status.Text = $"这个游戏改用：{item.Title} · {item.SelectedBuildOption}";
+            // Presets and quick values belong to each build already. Selecting does not rebind them.
         }
-        catch (Exception ex) { TextBlock_Status.Text = "NR 加载目录准备失败：" + ex.Message; return; }
-
-        AppConfig.SetOptiScalerVersion(_gameId, buildId);
-
-        // 在这里选构建 = 明确要用它 —— 顺手把启动选项里的「启用OptiScaler」也勾上
-        AppConfig.SetUseOptiScalerLaunchOption(_gameId, true);
-
-        // 只有真正选中的那张卡片算「使用中」
-        foreach (OptiScalerBuildItemViewModel other in _items)
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
         {
-            other.IsInUse = ReferenceEquals(other, item);
+            if (IsCurrentItem(item, game, generation)) TextBlock_Status.Text = "构建选择失败：" + ex.Message;
         }
-
-        TextBlock_Status.Text = $"这个游戏改用：{item.Title} · {item.SelectedBuildOption}";
-
-        // 「当前配置」按构建走，换版本要重新挂一遍
-        AttachPreset(item);
-        ReloadQuickValues(item);
-
-        // 「全局插件 → OptiScaler」那边也用 state.json 里那个「当前构建」，同步一下省得两边不一致
-        try
-        {
-            CreateLibrary()?.Select(buildId);
-        }
-        catch
-        {
-            // 同步失败不影响这边的选择
-        }
+        finally { item.IsBusy = false; _selectingBuild = false; }
     }
 
     private void Button_OpenLibrary_Click(object sender, RoutedEventArgs e)
@@ -667,66 +739,52 @@ public sealed partial class OptiScalerPage : PageBase
 
     #region 配置配置
 
-    private void AttachPreset(OptiScalerBuildItemViewModel item, List<string>? options = null, string? profileText = null)
+    private static PresetSnapshot ReadPresetSnapshot(string sourceId, string? buildDirectory,
+        string? gameKey, List<string>? options = null)
     {
-        bool wasLoading = _loading;
-        _loading = true;
+        options ??= [OptiScalerPresets.CurrentLabel,
+            .. OptiScalerPresets.List().Where(p => OptiScalerPresets.AllowsSource(p, sourceId))];
+        string saved = gameKey is null ? string.Empty : OptiScalerPresets.SelectedPreset(gameKey, buildDirectory);
+        string current = !string.IsNullOrWhiteSpace(saved) && options.Contains(saved)
+            ? saved : OptiScalerPresets.CurrentLabel;
+        string? profile = buildDirectory is not null && gameKey is not null
+            ? OptiScalerProfiles.ProfilePath(buildDirectory, gameKey) : null;
+        string profileText;
         try
         {
-            // 只放「不限分支」或「明确允许这个分支」的配置（例如 [ada] 那条只给 mfg-ada）
-            item.PresetOptions = options ??
-            [
-                OptiScalerPresets.CurrentLabel,
-                .. OptiScalerPresets.List().Where(p => OptiScalerPresets.AllowsSource(p, item.SourceId)),
-            ];
-            item.PresetChanged = OnPresetChanged;
-
-            string saved = _gameId is null
-                ? string.Empty
-                : OptiScalerPresets.SelectedPreset(_gameId.GameBiz.ToString(), item.BuildDirectory);
-
-            item.CurrentPreset = !string.IsNullOrWhiteSpace(saved)
-                                 && !string.Equals(saved, OptiScalerPresets.CurrentLabel, StringComparison.Ordinal)
-                                 && item.PresetOptions.Contains(saved)
-                ? saved
-                : OptiScalerPresets.CurrentLabel;
-
-            if (profileText is not null)
-            {
-                item.CurrentProfileText = profileText;
-                return;
-            }
-
-            // 把「这个游戏现在的 profiles 配置」写在卡片上  profiles 是按游戏分的，换游戏就换一份
-            string? profilePath = item.BuildDirectory is { } buildDir && _gameId is { } gameId
-                ? OptiScalerProfiles.ProfilePath(buildDir, gameId.GameBiz.ToString())
-                : null;
-
-            try
-            {
-                item.CurrentProfileText = profilePath is null
-                    ? "当前文件：这个构建没有可用目录"
-                    : File.Exists(profilePath)
-                        ? $"当前文件：profiles\\{Path.GetFileName(profilePath)}  {File.GetLastWriteTime(profilePath):yyyy-MM-dd HH:mm}"
-                        : "当前文件：还没有 profiles 配置（首次启动游戏时生成）";
-            }
-            catch
-            {
-                item.CurrentProfileText = "当前文件：读不到";
-            }
+            profileText = profile is null ? "当前文件：这个构建没有可用目录"
+                : File.Exists(profile)
+                    ? $"当前文件：profiles\\{Path.GetFileName(profile)}  {File.GetLastWriteTime(profile):yyyy-MM-dd HH:mm}"
+                    : "当前文件：还没有 profiles 配置（首次启动游戏时生成）";
         }
-        finally { _loading = wasLoading; }
+        catch { profileText = "当前文件：读不到"; }
+        return new(options, current, profileText);
+    }
+
+    private void AttachPreset(OptiScalerBuildItemViewModel item, PresetSnapshot snapshot)
+    {
+        // Do not let binding initialization look like a user edit, even after the page finished loading.
+        item.PresetChanged = null;
+        try
+        {
+            item.PresetOptions = snapshot.Options;
+            item.CurrentPreset = snapshot.Current;
+            item.CurrentProfileText = snapshot.ProfileText;
+        }
+        finally { item.PresetChanged = OnPresetChanged; }
     }
 
     #region 卡片扩展配置（20 项快捷开关）
 
     /// <summary>点卡片右下角的展开 / 收起箭头（两个静态按钮，靠 Visibility 切换）</summary>
-    private void Button_ExpandQuick_Click(object sender, RoutedEventArgs e)
+    private async void Button_ExpandQuick_Click(object sender, RoutedEventArgs e)
     {
         if (sender is FrameworkElement { Tag: OptiScalerBuildItemViewModel item })
         {
+            if (item.IsBusy || _loading) return;
+            if (!item.Expanded) await ReloadQuickValuesAsync(item);
+            if (PageCancellationToken.IsCancellationRequested || !_items.Contains(item)) return;
             item.Expanded = !item.Expanded;
-            if (item.Expanded) ReloadQuickValues(item);
             MotionAnimations.PlayItemAreaExpand(OptiScalerSourceList, item, "OptiQuickConfig", item.Expanded);
         }
     }
@@ -743,163 +801,154 @@ public sealed partial class OptiScalerPage : PageBase
         {
             if (descriptor.Key is "SmoothMotion" or "HookOriginalNvngxOnly" or "AutoExposure") continue;
             item.QuickItems.Add(new OptiQuickItemViewModel(descriptor,
-                (desc, value) => CommitQuickValue(item, desc, value)));
+                (desc, value) => CommitQuickValueAsync(item, desc, value)));
         }
     }
 
-    /// <summary>展开（或换配置 / 换构建）时，从当前生效的那份 ini 里重新读 20 个值</summary>
-    private void ReloadQuickValues(OptiScalerBuildItemViewModel item)
+    private static string ReadQuickText(string? buildDirectory, string gameKey)
     {
-        if (_gameId is null)
-        {
-            return;
-        }
+        if (buildDirectory is null) return string.Empty;
+        string preset = OptiScalerPresets.SelectedPreset(gameKey, buildDirectory);
+        if (preset.Length > 0) return OptiScalerPresets.Read(preset) ?? string.Empty;
+        string profile = OptiScalerProfiles.ProfilePath(buildDirectory, gameKey);
+        return File.Exists(profile) ? File.ReadAllText(profile) : string.Empty;
+    }
 
-        EnsureQuickItems(item);
-        string gameKey = _gameId.GameBiz.ToString();
-        string iniText = string.Empty;
+    private static void SetQuickValues(OptiScalerBuildItemViewModel item, string iniText)
+    {
+        foreach (var quick in item.QuickItems)
+            quick.LoadValue(OptiScalerQuickOptions.ReadValue(iniText, quick.Descriptor));
+    }
+
+    /// <summary>Collapsed cards do not read or create quick controls. One read per expansion.</summary>
+    private async Task ReloadQuickValuesAsync(OptiScalerBuildItemViewModel item)
+    {
+        if (_gameId is not { } game || item.IsBusy) return;
+        long generation = PageGeneration;
+        string? buildDirectory = item.BuildDirectory;
+        item.IsBusy = true;
         try
         {
-            if (item.BuildDirectory is { } buildDir)
-            {
-                string presetName = OptiScalerPresets.SelectedPreset(gameKey, buildDir);
-                if (presetName.Length > 0)
-                {
-                    iniText = OptiScalerPresets.Read(presetName) ?? string.Empty;
-                }
-                else
-                {
-                    string profile = OptiScalerProfiles.ProfilePath(buildDir, gameKey);
-                    iniText = File.Exists(profile) ? File.ReadAllText(profile) : string.Empty;
-                }
-            }
-
-            foreach (OptiQuickItemViewModel quick in item.QuickItems)
-            {
-                quick.LoadValue(OptiScalerQuickOptions.ReadValue(iniText, quick.Descriptor));
-            }
+            string text = await RunIoAsync(() => ReadQuickText(buildDirectory, game.GameBiz.ToString()), PageCancellationToken);
+            if (!IsCurrentItem(item, game, generation)) return;
+            EnsureQuickItems(item);
+            SetQuickValues(item, text);
         }
+        catch (OperationCanceledException) { }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Reload quick config values");
+            if (IsCurrentItem(item, game, generation)) TextBlock_Status.Text = "读取扩展配置失败：" + ex.Message;
         }
+        finally { item.IsBusy = false; }
     }
 
     /// <summary>
     /// 快捷开关落盘：挂着命名配置 → 写配置 ini（下次启动重放）；否则写这个游戏自己的
     /// profile，并尽量立刻同步进主 ini（只在这个游戏正持有主配置且没有未回收改动时）。
     /// </summary>
-    private bool CommitQuickValue(OptiScalerBuildItemViewModel item, OptiQuickDescriptor descriptor, string value)
+    private async Task<bool> CommitQuickValueAsync(OptiScalerBuildItemViewModel item, OptiQuickDescriptor descriptor, string value)
     {
-        if (_loading || _gameId is null || item.BuildDirectory is not { } buildDir)
-        {
+        if (_loading || item.IsBusy || _gameId is not { } game || item.BuildDirectory is not { } buildDirectory)
             return false;
-        }
-
-        string gameKey = _gameId.GameBiz.ToString();
+        long generation = PageGeneration;
+        item.IsBusy = true;
         try
         {
-            string presetName = OptiScalerPresets.SelectedPreset(gameKey, buildDir);
-            if (presetName.Length > 0)
-            {
-                string? text = OptiScalerPresets.Read(presetName);
-                if (text is null)
-                {
-                    TextBlock_Status.Text = $"读不到配置「{presetName}」，没写入。";
-                    return false;
-                }
-
-                string updated = OptiScalerQuickOptions.ApplyValue(text, descriptor, value);
-                if (!OptiScalerPresets.Save(presetName, updated, OptiScalerPresets.GetSources(presetName)))
-                {
-                    TextBlock_Status.Text = $"配置「{presetName}」写入失败（文件被占用？）。";
-                    return false;
-                }
-
-                TextBlock_Status.Text = $"已写入配置「{presetName}」：{descriptor.Section}/{descriptor.Key} = {value}（下次启动游戏生效）。";
-                return true;
-            }
-
-            if (!OptiScalerProfiles.TryPrepareProfileForRead(buildDir, gameKey))
-            {
-                TextBlock_Status.Text = "配置有并行修改，先解决冲突再改快捷开关。";
-                return false;
-            }
-
-            string profile = OptiScalerProfiles.ProfilePath(buildDir, gameKey);
-            string baseText = File.Exists(profile) ? File.ReadAllText(profile) : string.Empty;
-            string updatedProfile = OptiScalerQuickOptions.ApplyValue(baseText, descriptor, value);
-            bool written = string.Equals(OptiScalerProfiles.RuntimeOwner(buildDir), gameKey, StringComparison.Ordinal)
-                && OptiScalerProfiles.TryUpdateActiveProfile(buildDir, gameKey, _ => updatedProfile);
-            if (!written)
-            {
-                // 这个游戏没持有主配置（或持有但有未回收的运行时改动）：只写 profile，下次启动 Activate 时会重放
-                written = OptiScalerProfiles.TryWriteProfile(buildDir, gameKey, updatedProfile);
-            }
-
-            TextBlock_Status.Text = written
-                ? $"已写入 profiles\\{gameKey}.ini：{descriptor.Section}/{descriptor.Key} = {value}。"
-                : "profile 写入失败（文件被占用？）。";
-            return written;
+            var result = await RunIoAsync(() => WriteQuickValue(buildDirectory, game.GameBiz.ToString(), descriptor, value), PageCancellationToken);
+            if (IsCurrentItem(item, game, generation)) TextBlock_Status.Text = result.Message;
+            return result.Saved;
         }
+        catch (OperationCanceledException) { return false; }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Commit quick opti value");
-            TextBlock_Status.Text = "写入失败：" + ex.Message;
+            if (IsCurrentItem(item, game, generation)) TextBlock_Status.Text = "写入失败：" + ex.Message;
             return false;
         }
+        finally { item.IsBusy = false; }
+    }
+
+    private static (bool Saved, string Message) WriteQuickValue(string buildDir, string gameKey,
+        OptiQuickDescriptor descriptor, string value)
+    {
+        string presetName = OptiScalerPresets.SelectedPreset(gameKey, buildDir);
+        if (presetName.Length > 0)
+        {
+            string? text = OptiScalerPresets.Read(presetName);
+            if (text is null) return (false, $"读不到配置「{presetName}」，没写入。");
+            string updated = OptiScalerQuickOptions.ApplyValue(text, descriptor, value);
+            if (!OptiScalerPresets.Save(presetName, updated, OptiScalerPresets.GetSources(presetName)))
+                return (false, $"配置「{presetName}」写入失败（文件被占用？）。");
+            return (true, $"已写入配置「{presetName}」：{descriptor.Section}/{descriptor.Key} = {value}（下次启动游戏生效）。");
+        }
+
+        if (!OptiScalerProfiles.TryPrepareProfileForRead(buildDir, gameKey))
+            return (false, "配置有并行修改，先解决冲突再改快捷开关。");
+        string profile = OptiScalerProfiles.ProfilePath(buildDir, gameKey);
+        string baseText = File.Exists(profile) ? File.ReadAllText(profile) : string.Empty;
+        string updatedProfile = OptiScalerQuickOptions.ApplyValue(baseText, descriptor, value);
+        bool written = string.Equals(OptiScalerProfiles.RuntimeOwner(buildDir), gameKey, StringComparison.Ordinal)
+            && OptiScalerProfiles.TryUpdateActiveProfile(buildDir, gameKey, _ => updatedProfile);
+        if (!written)
+        {
+            // Preserve the existing profile conflict and ownership checks. Never replace it with defaults.
+            written = OptiScalerProfiles.TryWriteProfile(buildDir, gameKey, updatedProfile);
+        }
+        return (written, written
+            ? $"已写入 profiles\\{gameKey}.ini：{descriptor.Section}/{descriptor.Key} = {value}。"
+            : "profile 写入失败（文件被占用？）。");
     }
 
     #endregion
 
-    private void OnPresetChanged(OptiScalerBuildItemViewModel item, string? preset)
+    private async void OnPresetChanged(OptiScalerBuildItemViewModel item, string? preset)
     {
-        // 加载时 AttachPreset 会设一次值，那次不算用户切换
-        if (_loading || _gameId is null || string.IsNullOrWhiteSpace(preset))
+        if (_loading || item.IsBusy || _gameId is not { } game || string.IsNullOrWhiteSpace(preset)) return;
+        long generation = PageGeneration;
+        string gameKey = game.GameBiz.ToString();
+        string? directory = item.BuildDirectory;
+        string sourceId = item.SourceId;
+        string buildId = item.CurrentBuildId;
+        bool reloadQuick = item.QuickItems.Count > 0;
+        item.IsBusy = true;
+        try
         {
-            return;
+            var result = await RunIoAsync(() =>
+            {
+                string message;
+                if (!OptiScalerPresets.AllowsSource(preset, sourceId))
+                    message = $"配置「{preset}」限定了 OptiScaler 分支，当前构建是 {sourceId}，用不了。";
+                else if (directory is not null && !OptiScalerPresets.CollectFromRuntimeChecked(directory).Succeeded)
+                    message = "配置有并行修改或无法安全保存，请解决冲突后再切换配置。";
+                else
+                {
+                    AppConfig.SetValue(preset, OptiScalerPresets.PresetKey(gameKey, buildId));
+                    // Current detaches the named preset. Keep the game's own profile and NR settings.
+                    bool current = string.Equals(preset, OptiScalerPresets.CurrentLabel, StringComparison.Ordinal);
+                    AppConfig.SetValue(current ? string.Empty : preset, OptiScalerPresets.FollowKey(gameKey));
+                    if (current) message = "保持这个游戏自己的配置不动。";
+                    else if (directory is null) message = "这个构建里没有 OptiScaler.dll，套不了配置。";
+                    else message = OptiScalerPresets.Apply(directory, gameKey, preset)
+                        ? $"已套用「{preset}」，下次启动游戏生效。"
+                        : $"套用「{preset}」失败，配置文件读不到或目录不可写。";
+                }
+                var snapshot = ReadPresetSnapshot(sourceId, directory, gameKey);
+                return (Message: message, Preset: snapshot,
+                    Quick: reloadQuick ? ReadQuickText(directory, gameKey) : null);
+            }, PageCancellationToken);
+            if (!IsCurrentItem(item, game, generation)) return;
+            AttachPreset(item, result.Preset);
+            if (result.Quick is not null) SetQuickValues(item, result.Quick);
+            TextBlock_Status.Text = $"{item.Title}：{result.Message}";
         }
-
-        if (!OptiScalerPresets.AllowsSource(preset, item.SourceId))
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
         {
-            TextBlock_Status.Text = $"配置「{preset}」限定了 OptiScaler 分支，当前构建是 {item.SourceId}，用不了。";
-            AttachPreset(item);
-            return;
+            _logger.LogWarning(ex, "Change OptiScaler preset");
+            if (IsCurrentItem(item, game, generation)) TextBlock_Status.Text = "切换配置失败：" + ex.Message;
         }
-
-        string gameKey = _gameId.GameBiz.ToString();
-        if (item.BuildDirectory is { } previousBuild
-            && !OptiScalerPresets.CollectFromRuntimeChecked(previousBuild).Succeeded)
-        {
-            TextBlock_Status.Text = "配置有并行修改或无法安全保存，请解决冲突后再切换配置。";
-            AttachPreset(item);
-            return;
-        }
-        AppConfig.SetValue(preset, OptiScalerPresets.PresetKey(gameKey, item.CurrentBuildId));
-        // 记下「这个游戏挂的是哪份配置」 游戏改完退出时按它同步回配置
-        AppConfig.SetValue(preset, OptiScalerPresets.FollowKey(gameKey));
-        ReloadQuickValues(item);
-
-        if (string.Equals(preset, OptiScalerPresets.CurrentLabel, StringComparison.Ordinal))
-        {
-            // Returning to Current must detach any previously selected named preset.
-            // Otherwise exit-time sync keeps writing the live profile into a stale
-            // named config and makes the next Apply appear to revert.
-            AppConfig.SetValue(string.Empty, OptiScalerPresets.FollowKey(gameKey));
-            TextBlock_Status.Text = $"{item.Title}：保持这个游戏自己的配置不动（{item.CurrentProfileText}）。";
-            return;
-        }
-
-        if (item.BuildDirectory is not { } buildDirectory)
-        {
-            TextBlock_Status.Text = $"{item.Title}：这个构建里没有 OptiScaler.dll，套不了配置。";
-            return;
-        }
-
-        bool ok = OptiScalerPresets.Apply(buildDirectory, gameKey, preset);
-        TextBlock_Status.Text = ok
-            ? $"{item.Title}：已套用「{preset}」，下次启动游戏生效（游戏内 Save 后可用「修改」存回配置）。"
-            : $"{item.Title}：套用「{preset}」失败  配置文件读不到或目录不可写。";
+        finally { item.IsBusy = false; }
     }
 
     #region 注入用的 DLL 名字

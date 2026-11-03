@@ -43,7 +43,9 @@
                        Text="运行时齐全"
                        Visibility="Collapsed" />
 
-            <StackPanel Grid.Column="2"
+            <ContentControl x:Name="Control_Actions" Grid.Column="2"
+                            HorizontalContentAlignment="Stretch" VerticalContentAlignment="Center" IsTabStop="False">
+            <StackPanel
                         Orientation="Horizontal"
                         Spacing="8"
                         VerticalAlignment="Center">
@@ -64,6 +66,7 @@
                     </Button.Flyout>
                 </Button>
             </StackPanel>
+            </ContentControl>
         </Grid>
 
         <InfoBar x:Name="InfoBar_Status"
@@ -72,7 +75,9 @@
                  IsOpen="False"
                  Severity="Informational" />
 
-        <Grid Grid.Row="2" ColumnSpacing="12">
+        <ContentControl x:Name="Control_Content" Grid.Row="2"
+                        HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" IsTabStop="False">
+        <Grid ColumnSpacing="12">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="2*" MinWidth="340" />
                 <ColumnDefinition Width="3*" />
@@ -165,6 +170,7 @@
                 </ScrollViewer>
             </Grid>
         </Grid>
+        </ContentControl>
         <StackPanel Grid.Row="3" Spacing="4">
             <ProgressBar x:Name="ProgressBar_Overall"
                          Height="3"

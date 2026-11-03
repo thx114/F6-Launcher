@@ -121,7 +121,7 @@
     <value>華語</value>
   </data>
   <data name="UpdateWindow_Title" xml:space="preserve">
-    <value>HoYoShadeHub - 更新</value>
+    <value>F6 Launcher - 更新</value>
   </data>
   <data name="UpdateWindow_ReleaseTime" xml:space="preserve">
     <value>發佈時間：</value>
@@ -493,7 +493,7 @@
     <value>URL 協議</value>
   </data>
   <data name="SettingPage_URLProtocolDesc" xml:space="preserve">
-    <value>其他軟體可透過 URL 協議使用 HoYoShade Hub 的部分功能</value>
+    <value>其他軟體可透過 URL 協議使用 F6 Launcher 的部分功能</value>
   </data>
   <data name="SettingPage_RegisterURLProtocol" xml:space="preserve">
     <value>註冊 URL 協議</value>
@@ -559,7 +559,7 @@
     <value>開啓遊戲後</value>
   </data>
   <data name="AppearanceSettingPage_HelpUsTranslateHoYoShadeHub" xml:space="preserve">
-    <value>幫助我們翻譯 HoYoShade Hub</value>
+    <value>幫助我們翻譯 F6 Launcher</value>
   </data>
   <data name="FileSettingPage_Cache" xml:space="preserve">
     <value>快取</value>
@@ -723,7 +723,7 @@
     <value>無法連線 RPC 服務</value>
   </data>
   <data name="WelcomeView_DearPlayerWelcomeToHoYoShadeHub" xml:space="preserve">
-    <value>親愛的玩家，歡迎來到 HoYoShade Hub！</value>
+    <value>親愛的玩家，歡迎來到 F6 Launcher！</value>
   </data>
   <data name="WelcomeView_WelcomeToHoYoShadeHubDescription" xml:space="preserve">
     <value>這是一個專爲 HoYoShade 打造的 GUI 啔動器，幫助您更加輕鬆的安裝並管理它，享受更好的體驗。</value>
@@ -756,7 +756,7 @@
     <value>已安裝</value>
   </data>
   <data name="WelcomeView_HoYoShadeHubStart" xml:space="preserve">
-    <value>HoYoShade Hub，啟動！</value>
+    <value>F6 Launcher，啟動！</value>
   </data>
   <data name="GameSelector_ClickToSelectOrSwitchGame" xml:space="preserve">
     <value>點選此處選擇或切換遊戲。</value>
@@ -816,7 +816,7 @@
     <value>高動態範圍</value>
   </data>
   <data name="WelcomeView_IfHoYoShadeHubTakesALongTimeToStartItIsRecommendedToDisableSmartAppControlInWindowsSecurity" xml:space="preserve">
-    <value>如果 HoYoShade Hub 啟動時間過長，建議關閉 Windows 安全中心的SmartApp控制功能。</value>
+    <value>如果 F6 Launcher 啟動時間過長，建議關閉 Windows 安全中心的SmartApp控制功能。</value>
   </data>
   <data name="WelcomeView_OpenWindowsSecurity" xml:space="preserve">
     <value>開啟 Windows 安全中心</value>
@@ -825,7 +825,7 @@
     <value>了解更多</value>
   </data>
   <data name="WelcomeView_NetworkErrorYouCanContinueUsingHoYoShadeHubButYouWonTReceiveFutureUpdates" xml:space="preserve">
-    <value>網絡出錯，您可以繼續使用 HoYoShade Hub ，但無法收到更新。</value>
+    <value>網絡出錯，您可以繼續使用 F6 Launcher ，但無法收到更新。</value>
   </data>
   <data name="MainView_CheckSystemProxy_SystemProxyIsEnabled" xml:space="preserve">
     <value>系統代理已開啟。</value>
@@ -978,7 +978,7 @@
     <value>快捷鍵註冊失敗</value>
   </data>
   <data name="HotkeySetting_SingleKeyShortcutsTips" xml:space="preserve">
-    <value>如果註冊單鍵快捷鍵 (F1-F12)，需要以管理員權限運行 HoYoShade Hub，否則在遊戲中快捷鍵無法生效。</value>
+    <value>如果註冊單鍵快捷鍵 (F1-F12)，需要以管理員權限運行 F6 Launcher，否則在遊戲中快捷鍵無法生效。</value>
   </data>
   <data name="SettingPage_KeyboardShortcuts" xml:space="preserve">
     <value>鍵盤快速鍵</value>
@@ -1539,7 +1539,7 @@
     <value>Blender/留影機外掛注入處理程序 ({0}) 已在執行中，無法啟動 Blender/留影機外掛或 HoYoShade/OpenHoYoShade 注入器。</value>
   </data>
   <data name="SettingPage_BlenderPluginRegionRestriction" xml:space="preserve">
-    <value>該插件僅在中國大陸/香港/澳門/臺灣/新加坡等國家及地區可用。如果你並不位於上述國家及地區，該插件開發者/貢獻者及 HoYoShade Hub 的開發者/貢獻者有權拒絕提供支持。</value>
+    <value>該插件僅在中國大陸/香港/澳門/臺灣/新加坡等國家及地區可用。如果你並不位於上述國家及地區，該插件開發者/貢獻者及 F6 Launcher 的開發者/貢獻者有權拒絕提供支持。</value>
   </data>
   <data name="SettingPage_CurrentRegion" xml:space="preserve">
     <value>您目前的國家/地區為：{0}</value>
@@ -1560,7 +1560,7 @@
     <value>Starward啓動器聯動：</value>
   </data>
   <data name="SettingPage_StarwardProtocolNotAvailableTip" xml:space="preserve">
-    <value>請在 Starward 啓動器的設定 - 進階界面中啓用「註冊 URL 協議」開關，以此讓 HoYoShade Hub 進行鏈接。</value>
+    <value>請在 Starward 啓動器的設定 - 進階界面中啓用「註冊 URL 協議」開關，以此讓 F6 Launcher 進行鏈接。</value>
   </data>
   <data name="SettingPage_UseStarwardLauncherToStartGame" xml:space="preserve">
     <value>使用Starward啓動器啓動公開客戶端遊戲</value>
@@ -1876,7 +1876,7 @@
     <value>正在為您準備好一切...</value>
   </data>
   <data name="WelcomeOOBE_Greeting3" xml:space="preserve">
-    <value>一切就緒，歡迎使用HoYoShade Hub！</value>
+    <value>一切就緒，歡迎使用F6 Launcher！</value>
   </data>
   <data name="WelcomeOOBE_SkipHint" xml:space="preserve">
     <value>按任意鍵或點擊以跳過</value>

@@ -169,10 +169,10 @@ int wmain(int argc, wchar_t* argv[])
 	{
 		Log(L"HoYoShadeLauncher.exe not found");
 		SetProcessDPIAware();
-		auto ok = MessageBox(NULL, L"HoYoShade Hub files not found.\r\nWould you like to download it now?\r\nhttps://github.com/DuolaD/HoYoShade-Hub", L"HoYoShade Hub", MB_ICONWARNING | MB_OKCANCEL);
+		auto ok = MessageBox(NULL, L"F6 Launcher files not found.\r\nWould you like to download it now?\r\nhttps://github.com/thx114/HoYoShadeHub-DLSS5", L"F6 Launcher", MB_ICONWARNING | MB_OKCANCEL);
 		if (ok == IDOK)
 		{
-			ShellExecute(NULL, NULL, L"https://github.com/DuolaD/HoYoShade-Hub", NULL, NULL, SW_SHOWNORMAL);
+			ShellExecute(NULL, NULL, L"https://github.com/thx114/HoYoShadeHub-DLSS5", NULL, NULL, SW_SHOWNORMAL);
 		}
 	}
 

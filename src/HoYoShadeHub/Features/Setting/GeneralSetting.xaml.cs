@@ -218,7 +218,7 @@ public sealed partial class GeneralSetting : PageBase
     {
         try
         {
-            Uri targetUri = new Uri("https://hoyosha.de/");
+            Uri targetUri = new Uri("https://github.com/thx114/HoYoShadeHub-DLSS5");
             Uri? proxy = HttpClient.DefaultProxy.GetProxy(targetUri);
             if (proxy is not null && proxy != targetUri)
             {

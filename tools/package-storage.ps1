@@ -57,7 +57,7 @@ function Clear-PreviousPackages {
         Where-Object { $_.Name -match '^(full-\d|portable-\d|HoYoShadeHub$|portable-launcher$)' })
     foreach ($release in @((Join-Path $buildRoot 'release'), $ReleaseDirectory) | Where-Object { $_ } | Select-Object -Unique) {
         $candidates += @(Get-ChildItem -LiteralPath $release -Force -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -match '^HoYoShadeHub_Portable_.+\.(zip|7z)(\.partial)?$' -or ($_.PSIsContainer -and $_.Name -like 'HoYoShadeHub_Portable_*') })
+            Where-Object { $_.Name -match '^(?:HoYoShadeHub|F6Launcher)_Portable_.+\.(zip|7z)(\.partial)?$' -or ($_.PSIsContainer -and $_.Name -match '^(HoYoShadeHub|F6Launcher)_Portable_') })
     }
     foreach ($candidate in $candidates | Sort-Object FullName -Unique) {
         if ($PreserveOutput -and ([IO.Path]::GetFullPath($PreserveOutput)).StartsWith($candidate.FullName.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) { continue }

@@ -7,6 +7,7 @@ using HoYoShadeHub.Features.Modules;
 using Microsoft.Extensions.Logging;
 using System;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
@@ -24,7 +25,7 @@ internal static class RemoteCatalogDefaults
 }
 
 /// <summary>一次拉取的结果</summary>
-internal sealed record RemoteCatalogResult(bool Fetched, bool PluginsUpdated, bool OptiScalerUpdated, bool ModulesUpdated, string Message, bool DllFingerprintsUpdated = false);
+internal sealed record RemoteCatalogResult(bool Fetched, bool PluginsUpdated, bool OptiScalerUpdated, bool ModulesUpdated, string Message, bool DllFingerprintsUpdated = false, bool Skipped = false);
 
 /// <summary>
 /// 远端目录（插件 + OptiScaler + 模块）的拉取与缓存。
@@ -46,6 +47,10 @@ internal static class RemoteCatalogService
     private static readonly ILogger _logger = AppConfig.GetLogger<GlobalPluginPage>();
 
     private static readonly TimeSpan _interval = TimeSpan.FromHours(24);
+    private static readonly object _refreshLock = new();
+    private static Task<RemoteCatalogResult>? _refreshTask;
+    private static DateTimeOffset _nextAutomaticAttemptUtc;
+    private static string? _attemptScope;
 
     /// <summary>&lt;用户数据目录&gt;\.hysx\catalog</summary>
     public static string CacheDirectory
@@ -168,7 +173,49 @@ internal static class RemoteCatalogService
     public static async Task<RemoteCatalogResult> RefreshIfDueAsync(CancellationToken cancellationToken = default)
         => await RefreshAsync(force: false, cancellationToken);
 
-    public static async Task<RemoteCatalogResult> RefreshAsync(bool force, CancellationToken cancellationToken = default)
+    public static Task<RemoteCatalogResult> RefreshAsync(bool force, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        Task<RemoteCatalogResult> refresh;
+        lock (_refreshLock)
+        {
+            // 所有页面共享正在进行的拉取；单个页面离开只取消自己的等待。
+            if (_refreshTask is { IsCompleted: false })
+            {
+                refresh = _refreshTask;
+            }
+            else
+            {
+                string scope = CacheDirectory + "|" + BaseUrl;
+                if (!string.Equals(scope, _attemptScope, StringComparison.Ordinal))
+                {
+                    _attemptScope = scope;
+                    _nextAutomaticAttemptUtc = DateTimeOffset.MinValue;
+                }
+
+                if (!force && DateTimeOffset.UtcNow < _nextAutomaticAttemptUtc)
+                {
+                    return Task.FromResult(new RemoteCatalogResult(false, false, false, false, "刚尝试过目录刷新，稍后再自动重试。"));
+                }
+
+                // 失败也节流，避免 404 / 离线时每次进页都重抓；手动刷新始终绕过。
+                _nextAutomaticAttemptUtc = DateTimeOffset.UtcNow.AddMinutes(2);
+                refresh = _refreshTask = Task.Run(() => RefreshCoreAsync(force));
+            }
+        }
+
+        return force ? AwaitForcedRefreshAsync(refresh, cancellationToken) : refresh.WaitAsync(cancellationToken);
+    }
+
+    private static async Task<RemoteCatalogResult> AwaitForcedRefreshAsync(
+        Task<RemoteCatalogResult> refresh, CancellationToken cancellationToken)
+    {
+        RemoteCatalogResult result = await refresh.WaitAsync(cancellationToken);
+        // 强刷可以复用实际发生的下载；若刚好碰上自动检查的节流返回，仍须真正拉一次。
+        return !result.Skipped ? result : await RefreshAsync(force: true, cancellationToken);
+    }
+
+    private static async Task<RemoteCatalogResult> RefreshCoreAsync(bool force)
     {
         // 先把随包种子落到缓存（首跑离线也能用），再把缓存里的模块目录 / 条件表应用上
         //（打开页面就能用 —— 不管这次拉不拉）
@@ -179,7 +226,7 @@ internal static class RemoteCatalogService
 
         if (!force && !IsRefreshDue && File.Exists(DllFingerprintsCachePath))
         {
-            return new RemoteCatalogResult(false, false, false, false, "还没到 24 小时，先不拉。");
+            return new RemoteCatalogResult(false, false, false, false, "还没到 24 小时，先不拉。", Skipped: true);
         }
 
         if (CacheDirectory.Length == 0)
@@ -191,11 +238,16 @@ internal static class RemoteCatalogService
 
         using HttpClient client = HysxHttp.CreateClient(timeout: TimeSpan.FromSeconds(30));
 
-        bool plugins = await TryDownloadAsync(client, "plugins.json", PluginsCachePath, cancellationToken);
-        bool optiScaler = await TryDownloadAsync(client, "optiscaler.json", OptiScalerCachePath, cancellationToken);
-        bool modules = await TryDownloadAsync(client, "modules.json", ModulesCachePath, cancellationToken);
-        bool conditions = await TryDownloadAsync(client, "conditions.json", ConditionsCachePath, cancellationToken);
-        bool fingerprints = await TryDownloadAsync(client, DllFingerprintCatalog.FileName, DllFingerprintsCachePath, cancellationToken);
+        // 五份独立文件并行获取；不再把每份文件的线路等待累加。
+        string?[] strategies = Strategies().ToArray();
+        bool[] downloaded = await Task.WhenAll(
+            TryDownloadAsync(client, "plugins.json", PluginsCachePath, strategies, CancellationToken.None),
+            TryDownloadAsync(client, "optiscaler.json", OptiScalerCachePath, strategies, CancellationToken.None),
+            TryDownloadAsync(client, "modules.json", ModulesCachePath, strategies, CancellationToken.None),
+            TryDownloadAsync(client, "conditions.json", ConditionsCachePath, strategies, CancellationToken.None),
+            TryDownloadAsync(client, DllFingerprintCatalog.FileName, DllFingerprintsCachePath, strategies, CancellationToken.None));
+        bool plugins = downloaded[0], optiScaler = downloaded[1], modules = downloaded[2],
+            conditions = downloaded[3], fingerprints = downloaded[4];
 
         // 一个都没拿到就不盖时间戳，下次还会再试
         if (!plugins && !optiScaler && !modules && !conditions && !fingerprints)
@@ -216,23 +268,14 @@ internal static class RemoteCatalogService
     }
 
     /// <summary>下载一个文件，成功才覆盖（先写临时文件再搬过去，避免半截文件）。</summary>
-    private static async Task<bool> TryDownloadAsync(HttpClient client, string fileName, string targetPath, CancellationToken cancellationToken)
+    private static async Task<bool> TryDownloadAsync(HttpClient client, string fileName, string targetPath, string?[] strategies, CancellationToken cancellationToken)
     {
         string url = BaseUrl.TrimEnd('/') + "/" + fileName;
-
-        // 这段时间内已知「直连和公共代理都不通」：别对每个文件再把三档重试一遍
-        // （4 个文件 × 3 档 × 30 秒超时太慢）。到点自然重试。
-        if (DateTimeOffset.UtcNow < _networkDownUntil && _lastGoodProxy is null)
-        {
-            return false;
-        }
-
-        bool networkFailed = false;
 
         // 第一档 = 已经试通过的那档（没有就用「用户设置里那个代理 / 直连」），
         // 之后依次兜公共代理 —— raw.githubusercontent.com 在国内常不通，以前没这层兜底时
         // 远端目录永远拉不到，只能等随包种子（= 发一次版），看起来就像"加模块必须改代码"。
-        foreach (string? proxy in Strategies())
+        foreach (string? proxy in strategies)
         {
             try
             {
@@ -269,19 +312,12 @@ internal static class RemoteCatalogService
             }
             catch (HttpRequestException ex)
             {
-                networkFailed = true;
                 _logger.LogDebug(ex, "Remote catalog {File} not fetched (proxy={Proxy})", fileName, proxy ?? "direct");
             }
             catch (Exception ex)
             {
-                networkFailed = true;
                 _logger.LogWarning(ex, "Remote catalog {File} failed (proxy={Proxy})", fileName, proxy ?? "direct");
             }
-        }
-
-        if (networkFailed)
-        {
-            _networkDownUntil = DateTimeOffset.UtcNow.AddMinutes(2);
         }
 
         return false;
@@ -292,9 +328,6 @@ internal static class RemoteCatalogService
 
     /// <summary>上一次成功用的那档（null = 直连 / 用户自己的代理），下次先试它</summary>
     private static string? _lastGoodProxy;
-
-    /// <summary>到这个时刻之前不再重试（区分「仓库没文件」和「网络根本不通」）</summary>
-    private static DateTimeOffset _networkDownUntil = DateTimeOffset.MinValue;
 
     /// <summary>本次要试的档位：上次成功的那档优先，然后剩下的</summary>
     private static System.Collections.Generic.IEnumerable<string?> Strategies()

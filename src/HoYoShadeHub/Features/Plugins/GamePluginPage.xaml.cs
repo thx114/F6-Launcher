@@ -149,27 +149,84 @@ public sealed partial class GamePluginPage : PageBase
 
     private void ComboBox_Nr_DropDownOpened(object sender, object e) => ComboBox_Nr_Loaded(sender, new RoutedEventArgs());
 
-    private void ComboBox_Nr_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private async void ComboBox_Nr_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (sender is not ComboBox combo || combo.Tag is not false || combo.SelectedItem is not ComboBoxItem { IsEnabled: true } selected) return;
-        if (CurrentGameId is not { } game || _entry is null || _host is null || _isWorking) return;
+        if (CurrentGameId is not { } game || _entry is null || _host is null || !_isPageAlive) return;
+        if (_isWorking)
+        {
+            // 同游戏可能有多张 NR 卡片；忙碌时撤回另一个控件的改选，避免显示未提交的值。
+            combo.Tag = true;
+            try { combo.SelectedItem = e.RemovedItems.FirstOrDefault(); }
+            finally { combo.Tag = false; }
+            return;
+        }
         var entry = _entry;
         var host = _host;
         string? version = selected.Tag as string;
-        if (!_isPageAlive || string.Equals(version, AppConfig.GetGameNrVersion(game, "reshade"), StringComparison.OrdinalIgnoreCase)) return;
-        string? previous = AppConfig.GetGameNrVersion(game, "reshade");
+        long generation = PageGeneration;
+        var cancellationToken = PageCancellationToken;
+        bool IsCurrent() => _isPageAlive && IsPageGenerationCurrent(generation)
+            && CurrentGameId?.GameBiz == game.GameBiz && ReferenceEquals(_entry, entry) && ReferenceEquals(_host, host);
+        bool wasEnabled = combo.IsEnabled;
+        _isWorking = true;
+        combo.IsEnabled = false;
+        TextBlock_Status.Text = "正在校验并切换本游戏 ReShade NR：" + (version ?? "插件默认") + "…";
         try
         {
-            AppConfig.SetGameNrVersion(game, "reshade", version);
-            GameAddonPackService.Sync(game, entry, host);
+            await NrRuntimeWorkQueue.RunAsync(() =>
+            {
+                // 在队列中重读，避免排队期间其他页面已完成切换却被旧 previous 回滚。
+                string? previous = AppConfig.GetGameNrVersion(game, "reshade");
+                if (string.Equals(version, previous, StringComparison.OrdinalIgnoreCase)) return;
+                // 先验证归档内容与严格硬链接；失败时尚未修改本游戏选择。
+                if (version is not null) NrRuntimeLibrary.VersionFile(AppConfig.CacheRoot, version);
+                bool syncStarted = false;
+                try
+                {
+                    // Sync 通过配置读选择。临时写入、同步、失败恢复必须留在同一队列事务中。
+                    AppConfig.SetGameNrVersion(game, "reshade", version);
+                    if (!string.Equals(AppConfig.GetGameNrVersion(game, "reshade"), version, StringComparison.OrdinalIgnoreCase))
+                        throw new IOException("NR 选择未能保存，已停止同步。");
+                    syncStarted = true;
+                    GameAddonPackService.Sync(game, entry, host);
+                }
+                catch (Exception changeError)
+                {
+                    try
+                    {
+                        AppConfig.SetGameNrVersion(game, "reshade", previous);
+                        if (!string.Equals(AppConfig.GetGameNrVersion(game, "reshade"), previous, StringComparison.OrdinalIgnoreCase))
+                            throw new IOException("原 NR 选择未能恢复。");
+                        if (syncStarted) GameAddonPackService.Sync(game, entry, host);
+                    }
+                    catch (Exception restoreError)
+                    {
+                        throw new AggregateException("NR 切换失败，原插件包未能完整恢复；请检查后重新准备。", changeError, restoreError);
+                    }
+                    throw;
+                }
+                // 开始同步后不半途取消；成功才向 UI 报告已提交。
+            }, cancellationToken);
+            if (!IsCurrent()) return;
             LoadGame(entry);
             TextBlock_Status.Text = "本游戏 ReShade NR：" + (version ?? "插件默认") + "（重启游戏生效）";
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
         catch (Exception ex)
         {
-            AppConfig.SetGameNrVersion(game, "reshade", previous);
-            NrVersionPicker.Fill(combo, previous);
+            _logger.LogError(ex, "Switch ReShade NR for {Game} to {Version}", game.GameBiz.Value, version);
+            if (!IsCurrent()) return;
+            NrVersionPicker.Fill(combo, AppConfig.GetGameNrVersion(game, "reshade"));
+            TextBlock_Status.Text = "本游戏 ReShade NR 切换失败：" + ex.Message;
             ShowInfo("NR 版本切换失败", ex.Message, InfoBarSeverity.Error);
+        }
+        finally
+        {
+            _isWorking = false;
+            if (IsCurrent() && combo.IsLoaded) combo.IsEnabled = wasEnabled;
+            // 旧事务只完成文件操作。若页面已重入/换游戏，补刷当前页面，不把旧结果写回新页面。
+            if (_isPageAlive && !IsCurrent()) await RefreshAsync();
         }
     }
 

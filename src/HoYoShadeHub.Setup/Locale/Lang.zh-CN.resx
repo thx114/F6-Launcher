@@ -118,16 +118,16 @@
     <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
   </resheader>
   <data name="OSVersionLessThan17763" xml:space="preserve">
-    <value>您的操作系统版本低于 Windows 10 1809 (Build 17763)，请升级到最新版本的 Windows 以继续安装 HoYoShade Hub。</value>
+    <value>您的操作系统版本低于 Windows 10 1809 (Build 17763)，请升级到最新版本的 Windows 以继续安装 F6 Launcher。</value>
   </data>
   <data name="ASetupIsAlreadyRunning" xml:space="preserve">
     <value>已有安装程序正在运行</value>
   </data>
   <data name="HoYoShadeHubSetup" xml:space="preserve">
-    <value>HoYoShade Hub 安装程序</value>
+    <value>F6 Launcher 安装程序</value>
   </data>
   <data name="HoYoShadeHubLaunch" xml:space="preserve">
-    <value>HoYoShade Hub，启动！</value>
+    <value>F6 Launcher，启动！</value>
   </data>
   <data name="GameLauncherForMiHoYo" xml:space="preserve">
     <value>下一代 HoYoShade 启动器</value>
@@ -151,7 +151,7 @@
     <value>安装过程中发生错误</value>
   </data>
   <data name="HoYoShadeHubUninstaller" xml:space="preserve">
-    <value>HoYoShade Hub 卸载程序</value>
+    <value>F6 Launcher 卸载程序</value>
   </data>
   <data name="UninstallationComplete" xml:space="preserve">
     <value>卸载完成</value>
@@ -181,7 +181,7 @@
     <value>可安全删除所有文件</value>
   </data>
   <data name="HoYoShadeHubUpdater" xml:space="preserve">
-    <value>HoYoShade Hub 更新程序</value>
+    <value>F6 Launcher 更新程序</value>
   </data>
   <data name="Update" xml:space="preserve">
     <value>更新</value>
@@ -193,7 +193,7 @@
     <value>更新过程中发生错误</value>
   </data>
   <data name="HoYoShadeHubIsRunningForceClose" xml:space="preserve">
-    <value>检测到 HoYoShade Hub ({0}) 正在运行，是否强制关闭？</value>
+    <value>检测到 F6 Launcher ({0}) 正在运行，是否强制关闭？</value>
   </data>
   <data name="IHaveReadAndAgreeToThePrivacyPolicy" xml:space="preserve">
     <value>我已阅读并同意《用户协议及隐私策略》</value>

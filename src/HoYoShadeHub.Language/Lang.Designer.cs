@@ -79,7 +79,7 @@ namespace HoYoShadeHub.Language {
         }
         
         /// <summary>
-        ///   查找类似 Help us translate HoYoShade Hub 的本地化字符串。
+        ///   查找类似 Help us translate F6 Launcher 的本地化字符串。
         /// </summary>
         public static string AppearanceSettingPage_HelpUsTranslateHoYoShadeHub {
             get {
@@ -2120,7 +2120,7 @@ namespace HoYoShadeHub.Language {
         }
         
         /// <summary>
-        ///   查找类似 If you register single-key shortcuts (F1-12), you need to run HoYoShade Hub with administrator privileges; otherwise, the shortcuts may not work in the game. 的本地化字符串。
+        ///   查找类似 If you register single-key shortcuts (F1-12), you need to run F6 Launcher with administrator privileges; otherwise, the shortcuts may not work in the game. 的本地化字符串。
         /// </summary>
         public static string HotkeySetting_SingleKeyShortcutsTips {
             get {
@@ -3872,7 +3872,7 @@ namespace HoYoShadeHub.Language {
         }
         
         /// <summary>
-        ///   查找类似 This plugin is only available in Mainland China/Hong Kong/Macau/Taiwan/Singapore. If you are not in the above countries and regions, the plugin developers/contributors and HoYoShade Hub developers/contributors reserve the right to refuse support. 的本地化字符串。
+        ///   查找类似 This plugin is only available in Mainland China/Hong Kong/Macau/Taiwan/Singapore. If you are not in the above countries and regions, the plugin developers/contributors and F6 Launcher developers/contributors reserve the right to refuse support. 的本地化字符串。
         /// </summary>
         public static string SettingPage_BlenderPluginRegionRestriction {
             get {
@@ -4404,7 +4404,7 @@ namespace HoYoShadeHub.Language {
         }
         
         /// <summary>
-        ///   查找类似 Please enable the &quot;Register URL Protocol&quot; switch in Starward Launcher&apos;s Settings - Advanced interface to allow HoYoShade Hub to connect. 的本地化字符串。
+        ///   查找类似 Please enable the &quot;Register URL Protocol&quot; switch in Starward Launcher&apos;s Settings - Advanced interface to allow F6 Launcher to connect. 的本地化字符串。
         /// </summary>
         public static string SettingPage_StarwardProtocolNotAvailableTip {
             get {
@@ -4485,7 +4485,7 @@ namespace HoYoShadeHub.Language {
         }
         
         /// <summary>
-        ///   查找类似 Other software can use some of HoYoShade Hub&apos;s features through the URL protocol. 的本地化字符串。
+        ///   查找类似 Other software can use some of F6 Launcher&apos;s features through the URL protocol. 的本地化字符串。
         /// </summary>
         public static string SettingPage_URLProtocolDesc {
             get {
@@ -5079,7 +5079,7 @@ namespace HoYoShadeHub.Language {
         }
         
         /// <summary>
-        ///   查找类似 Dear Player, welcome to HoYoShade Hub! 的本地化字符串。
+        ///   查找类似 Dear Player, welcome to F6 Launcher! 的本地化字符串。
         /// </summary>
         public static string WelcomeView_DearPlayerWelcomeToHoYoShadeHub {
             get {
@@ -5115,7 +5115,7 @@ namespace HoYoShadeHub.Language {
         }
         
         /// <summary>
-        ///   查找类似 HoYoShade Hub, Start! 的本地化字符串。
+        ///   查找类似 F6 Launcher, Start! 的本地化字符串。
         /// </summary>
         public static string WelcomeView_HoYoShadeHubStart {
             get {
@@ -5124,7 +5124,7 @@ namespace HoYoShadeHub.Language {
         }
         
         /// <summary>
-        ///   查找类似 If HoYoShade Hub takes a long time to start, it is recommended to disable Smart App Control in Windows Security. 的本地化字符串。
+        ///   查找类似 If F6 Launcher takes a long time to start, it is recommended to disable Smart App Control in Windows Security. 的本地化字符串。
         /// </summary>
         public static string WelcomeView_IfHoYoShadeHubTakesALongTimeToStartItIsRecommendedToDisableSmartAppControlInWindowsSecurity {
             get {
@@ -5161,7 +5161,7 @@ namespace HoYoShadeHub.Language {
         }
         
         /// <summary>
-        ///   查找类似 Network error. You can continue using HoYoShade Hub, but you won&apos;t receive future updates. 的本地化字符串。
+        ///   查找类似 Network error. You can continue using F6 Launcher, but you won&apos;t receive future updates. 的本地化字符串。
         /// </summary>
         public static string WelcomeView_NetworkErrorYouCanContinueUsingHoYoShadeHubButYouWonTReceiveFutureUpdates {
             get {

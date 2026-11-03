@@ -3,21 +3,81 @@ using HoYoShadeHub.Core.HoYoPlay;
 using HoYoShadeHub.Extensions.Models;
 using HoYoShadeHub.Extensions.Services;
 using System;
+using System.Collections.Concurrent;
 using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace HoYoShadeHub.Features.Plugins;
 
 internal static class GameNrRuntimeService
 {
+    private sealed class GameWork
+    {
+        public readonly SemaphoreSlim Gate = new(1, 1);
+        public long SelectionRevision;
+    }
+
+    private static readonly ConcurrentDictionary<string, GameWork> Work = new(StringComparer.OrdinalIgnoreCase);
+    private static GameWork For(GameId game) => Work.GetOrAdd(game.GameBiz.Value, _ => new GameWork());
+
     // 显式准备/启动入口调用；导航和只读查询不得创建加载目录。
     public static void PrepareOpti(GameId game)
-        => PrepareOpti(game, AppConfig.GetGameNrVersion(game, "opti"));
+    {
+        var work = For(game);
+        work.Gate.Wait();
+        try { NrRuntimeWorkQueue.Run(() => PrepareOpti(game, AppConfig.GetGameNrVersion(game, "opti"))); }
+        finally { work.Gate.Release(); }
+    }
+
+    public static async Task PrepareOptiAsync(GameId game, CancellationToken cancellationToken = default)
+    {
+        var work = For(game);
+        await work.Gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            // 只在准备开始前取消；已开始的链接/配置投影必须完成，不能留下半次切换。
+            await NrRuntimeWorkQueue.RunAsync(() => PrepareOpti(game, AppConfig.GetGameNrVersion(game, "opti")), cancellationToken)
+                .ConfigureAwait(false);
+        }
+        finally { work.Gate.Release(); }
+    }
 
     // 只有准备成功后才写选择；CLI / 覆盖包使用与启动链相同的加载目录及配置投影。
     public static void SetOptiVersion(GameId game, string? version)
     {
+        var work = For(game);
+        long revision = Interlocked.Increment(ref work.SelectionRevision);
+        work.Gate.Wait();
+        try { NrRuntimeWorkQueue.Run(() => ApplySelection(game, version, work, revision)); }
+        finally { work.Gate.Release(); }
+    }
+
+    /// <summary>
+    /// 后台准备并串行提交同一游戏的 NR 选择。尚未开始的旧请求直接跳过；
+    /// 已开始的请求完成准备与记账后才放行下一次。false 表示已有更新请求，调用方不应回写旧 UI。
+    /// </summary>
+    public static async Task<bool> SetOptiVersionAsync(GameId game, string? version,
+        CancellationToken cancellationToken = default)
+    {
+        var work = For(game);
+        cancellationToken.ThrowIfCancellationRequested();
+        long revision = Interlocked.Increment(ref work.SelectionRevision);
+        await work.Gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await NrRuntimeWorkQueue.RunAsync(() => ApplySelection(game, version, work, revision), cancellationToken)
+                .ConfigureAwait(false);
+        }
+        finally { work.Gate.Release(); }
+    }
+
+    private static bool ApplySelection(GameId game, string? version, GameWork work, long revision)
+    {
+        if (revision != Volatile.Read(ref work.SelectionRevision)) return false;
         PrepareOpti(game, version);
         AppConfig.SetGameNrVersion(game, "opti", version);
+        return revision == Volatile.Read(ref work.SelectionRevision);
     }
 
     private static void PrepareOpti(GameId game, string? nr)

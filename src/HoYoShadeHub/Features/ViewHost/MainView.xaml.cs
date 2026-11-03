@@ -665,7 +665,7 @@ public sealed partial class MainView : UserControl, IShellFileDropTarget
         try
         {
             await Task.Delay(1500, cancellationToken);
-            Uri? proxy = HttpClient.DefaultProxy.GetProxy(new Uri("https://hoyosha.de/"));
+            Uri? proxy = HttpClient.DefaultProxy.GetProxy(new Uri("https://github.com/thx114/HoYoShadeHub-DLSS5"));
             if (proxy is not null)
             {
                 InAppToast.MainWindow?.Information(Lang.MainView_CheckSystemProxy_SystemProxyIsEnabled, proxy.ToString(), 5000);

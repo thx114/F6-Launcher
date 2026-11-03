@@ -195,14 +195,15 @@ public static class DohService
 
     public static HttpMessageHandler CreateSocketsHttpHandler()
     {
-        return new EchFallbackHttpMessageHandler(new SocketsHttpHandler
+        return new ForkNetworkPolicyHandler(new EchFallbackHttpMessageHandler(new SocketsHttpHandler
         {
+            AllowAutoRedirect = false,
             AutomaticDecompression = DecompressionMethods.All,
             EnableMultipleHttp2Connections = true,
             EnableMultipleHttp3Connections = true,
             ConnectCallback = ConnectWithDohAsync,
             PooledConnectionIdleTimeout = TimeSpan.FromSeconds(15),
-        });
+        }));
     }
 
 
@@ -306,6 +307,7 @@ public static class DohService
     private static async ValueTask<Stream> ConnectWithDohAsync(SocketsHttpConnectionContext context, CancellationToken cancellationToken)
     {
         string host = context.DnsEndPoint.Host;
+        ForkNetworkPolicy.EnsureAllowed(host);
         var addresses = await ResolveHostAddressesAsync(host, cancellationToken);
         addresses = OrderAddressesByPreference(addresses);
 

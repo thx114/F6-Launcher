@@ -116,9 +116,9 @@ public sealed partial class UpdateWindow : WindowEx
         {
             [-1] = Lang.HoYoShadeDownloadView_Server_AutoSelect,
             [0] = Lang.HoYoShadeDownloadView_Server_GithubDirect,
-            [1] = AppConfig.EnableEch ? "Cloudflare ECH" : Lang.HoYoShadeDownloadView_Server_Cloudflare,
-            [2] = Lang.HoYoShadeDownloadView_Server_TencentCloud,
-            [3] = Lang.HoYoShadeDownloadView_Server_AlibabaCloud,
+
+
+
         }))
         {
             DownloadServers.Add(server);
@@ -396,7 +396,7 @@ public sealed partial class UpdateWindow : WindowEx
                 {
                     "release" => NewVersion.DisableAutoUpdate && !string.IsNullOrEmpty(NewVersion.PackageUrl)
                         ? NewVersion.PackageUrl  // For framework updates, use PackageUrl directly
-                        : $"https://github.com/{GithubUpdateService.Repository}/releases/tag/{NewVersion.Version}",
+                        : $"https://github.com/{GithubUpdateService.Repository}/releases/tag/v{NewVersion.Version.TrimStart('v', 'V')}",
                     "package" => NewVersion.PackageUrl,
                     _ => null,
                 };
@@ -573,7 +573,9 @@ public sealed partial class UpdateWindow : WindowEx
                             }
                         }
 
-                        string[] proxies = currentServerIndex == 1 ? new string[] { null } : LauncherUpdateProxyManager.GetAllProxiesForServer(currentServerIndex).OrderBy(_ => Random.Shared.Next()).ToArray();
+                        string[] proxies = LauncherUpdateProxyManager.GetAllProxiesForServer(currentServerIndex).OrderBy(_ => Random.Shared.Next()).ToArray();
+                        if (proxies.Length == 0) proxies = new string[] { null };
+                        HoYoShadeHub.Features.Plugins.PluginDownloadProxy.Apply(currentServerIndex);
 
                         foreach (var proxyUrl in proxies)
                         {
@@ -924,7 +926,7 @@ public sealed partial class UpdateWindow : WindowEx
     private static System.Net.Http.HttpClient CreateGithubApiClient()
     {
         var client = new System.Net.Http.HttpClient();
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("HoYoShadeHub-DLSS5/1.0");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("F6Launcher/1.4.8");
         client.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
         return client;
     }
@@ -946,7 +948,8 @@ public sealed partial class UpdateWindow : WindowEx
         string tag, System.Threading.CancellationToken cancellationToken = default)
     {
         using System.Net.Http.HttpClient client = CreateGithubApiClient();
-        string url = $"https://api.github.com/repos/{GithubUpdateService.Repository}/releases/tags/{Uri.EscapeDataString(tag)}";
+          tag = "v" + tag.TrimStart('v', 'V');
+          string url = $"https://api.github.com/repos/{GithubUpdateService.Repository}/releases/tags/{Uri.EscapeDataString(tag)}";
         using System.Net.Http.HttpResponseMessage response = await client.GetAsync(url, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {

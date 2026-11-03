@@ -1,4 +1,4 @@
-﻿using Aprillz.MewUI;
+using Aprillz.MewUI;
 using Aprillz.MewUI.Controls;
 using HoYoShadeHub.Setup.Locale;
 
@@ -21,7 +21,7 @@ public class TextWindow : WindowBase
     public TextWindow(string text) : base()
     {
         this.Resizable(WindowWidth, WindowHeight);
-        this.Title = "HoYoShade Hub";
+        this.Title = "F6 Launcher";
         promptText = text;
         BuildUI();
     }
@@ -36,7 +36,7 @@ public class TextWindow : WindowBase
                             .Top()
                             .Left()
                             .FontSize(14)
-                            .Text("HoYoShade Hub")
+                            .Text("F6 Launcher")
                             .Foreground(Theme.Palette.DisabledAccent)
                             .Margin(12, 8, 0, 0),
              BuildHeader(),
@@ -71,7 +71,7 @@ public class TextWindow : WindowBase
                 new TextBlock().FontWeight(FontWeight.Bold)
                                .FontSize(28)
                                .Foreground(Theme.Palette.Accent)
-                               .Text("HoYoShade Hub"),
+                               .Text("F6 Launcher"),
                 new TextBlock().FontSize(14)
                                .Foreground(Theme.Palette.DisabledAccent)
                                .Text(Lang.GameLauncherForMiHoYo)));

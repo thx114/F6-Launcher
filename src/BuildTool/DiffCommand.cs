@@ -244,7 +244,7 @@ public class DiffCommand
     private async Task<ReleaseManifest?> GetManifestAsync(string version, Architecture arch, InstallType type)
     {
         string name = $"manifest_{version}_{arch}_{type}".ToLower();
-        string url = $"https://cdn.cf.storage.hub.hoyosha.de/release/manifest/{name}.json";
+        string url = $"{ReleaseEndpoints.BaseUrl}/manifest/{name}.json";
         try
         {
             var manifest = await _polly.ExecuteAsync(async _ =>
