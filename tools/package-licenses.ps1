@@ -18,12 +18,20 @@ function Assert-ForkDistribution {
     if (Test-Path -LiteralPath (Join-Path $Output 'HoYoShadeHub.exe')) {
         throw 'Distribution must expose only F6Launcher.exe at its root.'
     }
-    foreach ($relative in @('F6Launcher.exe', "app-$Version\F6Launcher.exe")) {
+    foreach ($relative in @('F6Launcher.exe', "app-$Version\F6Launcher.exe", "app-$Version\HoYoShadeHub.exe")) {
         $path = Join-Path $Output $relative
         if (-not (Test-Path -LiteralPath $path -PathType Leaf) -or
             [Diagnostics.FileVersionInfo]::GetVersionInfo($path).ProductName -ne 'F6 Launcher') {
             throw "Refusing to distribute a launcher without independent product branding: $path"
         }
+    }
+    $appExe = Join-Path $Output "app-$Version\F6Launcher.exe"
+    $compatExe = Join-Path $Output "app-$Version\HoYoShadeHub.exe"
+    if ((Get-FileHash -LiteralPath $appExe).Hash -ne (Get-FileHash -LiteralPath $compatExe).Hash) {
+        throw 'The legacy update entry must be the exact F6 application host.'
+    }
+    if ((Get-Content -LiteralPath (Join-Path $Output 'version.ini') -Raw).Trim() -ne "exe_path=app-$Version\HoYoShadeHub.exe") {
+        throw 'version.ini must remain readable by legacy-name-only installed updaters.'
     }
     foreach ($name in @('f6-logo.ico', 'f6-logo.png')) {
         $source = Join-Path $RepoRoot "src\HoYoShadeHub\Assets\$name"

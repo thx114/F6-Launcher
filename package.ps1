@@ -7,8 +7,8 @@
 
         <Output>\
         ├─ F6Launcher.exe         外层启动器（自包含单文件，双击入口）
-        ├─ version.ini            exe_path=app-<版本>\F6Launcher.exe
-        └─ app-<版本>\            主程序（dotnet publish，自包含、ReadyToRun）
+        ├─ version.ini            指向 app-<版本>\HoYoShadeHub.exe（兼容旧更新器）
+        └─ app-<版本>\            主程序及旧更新器所需的内部兼容入口
 
     同时生成 zip：
         build\release\F6Launcher_Portable_<版本>_<架构>.zip
@@ -174,8 +174,11 @@ try {
     if (Test-Path -LiteralPath $legacyLauncher) { throw "打包暂存含旧入口，请使用干净输出目录：$legacyLauncher" }
     Remove-PackageArtifact -LiteralPath $staleLauncher -AllowedRoot $outDir -Records $packageCleanup
 
+    # 更早的已安装更新器只接受这个内部文件名，无法靠新包中的代码修复旧进程。
+    # 复制的是带 F6 品牌且仍加载 F6Launcher.dll 的同一 apphost；外层仍只有 F6Launcher.exe。
+    Copy-Item -LiteralPath (Join-Path $appDir 'F6Launcher.exe') -Destination (Join-Path $appDir 'HoYoShadeHub.exe')
     Set-Content -Path (Join-Path $outDir "version.ini") `
-        -Value "exe_path=app-$Version\F6Launcher.exe" -Encoding UTF8
+        -Value "exe_path=app-$Version\HoYoShadeHub.exe" -Encoding UTF8
 
     # 不打包 config.ini：解压覆盖旧客户端时需保留用户已有配置。
     Remove-Item (Join-Path $outDir "config.ini") -Force -ErrorAction SilentlyContinue
@@ -261,7 +264,7 @@ try {
             $entryCount++
         }
         if ($entryCount -ne @(Get-ChildItem -LiteralPath $outDir -Recurse -File -Force).Count) { throw 'ZIP 条目数与源目录不一致。' }
-        foreach ($required in @('F6Launcher.exe', 'version.ini', "app-$Version/F6Launcher.exe", "app-$Version/F6Launcher.dll")) {
+        foreach ($required in @('F6Launcher.exe', 'version.ini', "app-$Version/F6Launcher.exe", "app-$Version/HoYoShadeHub.exe", "app-$Version/F6Launcher.dll")) {
             if ($required -notin $check.Entries.FullName) { throw "普通包缺少必要条目：$required" }
         }
         if ('HoYoShadeHub.exe' -in $check.Entries.FullName) { throw '普通包不应包含旧版根入口 HoYoShadeHub.exe。' }

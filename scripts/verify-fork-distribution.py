@@ -5,6 +5,7 @@ from distribution_binary_strings import managed_user_strings
 root=Path(__file__).resolve().parents[1]
 p=argparse.ArgumentParser(description=__doc__)
 p.add_argument('archives',nargs='+',type=Path)
+p.add_argument('--output',type=Path,default=root/'artifacts/fork-compliance-20261103/distribution-audit.json')
 args=p.parse_args()
 copyrights={'LICENSE':'Copyright (c) 2025 哆啦D夢|DuolaD','Starward_LICENSE':'Copyright (c) 2023 Scighost'}
 for name,expected in copyrights.items():
@@ -18,6 +19,11 @@ for path in args.archives:
         app=[n for n in names if re.fullmatch(r'app-[^/]+/F6Launcher.exe',n)]
         if len(app)!=1: raise ValueError('Expected exactly one application version')
         prefix=app[0].rsplit('/',1)[0]+'/'
+        # Packages must pass the validator already running in older installations.
+        if z.read('version.ini').decode('utf-8-sig').strip() != 'exe_path='+prefix.rstrip('/')+'\\HoYoShadeHub.exe':
+            raise ValueError('version.ini is incompatible with legacy-name-only installed updaters')
+        if z.read(prefix+'HoYoShadeHub.exe') != z.read(prefix+'F6Launcher.exe'):
+            raise ValueError('Internal compatibility entry differs from the F6 application host')
         for location in ('',prefix):
             for name in ('LICENSE','Starward_LICENSE','NOTICE.md'):
                 if z.read(location+name)!=(root/name).read_bytes():
@@ -50,6 +56,7 @@ for path in args.archives:
                         'sha256':hashlib.file_digest(path.open('rb'),'sha256').hexdigest(),
                         'entries':len(names),'networkFilesScanned':scanned,'licenseBytesVerified':True,
                         'independentArtworkVerified':True,'runtimeTested':False})
-output=root/'artifacts/fork-compliance-20261103/distribution-audit.json'
+output=args.output
+output.parent.mkdir(parents=True,exist_ok=True)
 output.write_text(json.dumps(results,ensure_ascii=False,indent=2),encoding='utf-8',newline='\n')
 print(json.dumps(results,ensure_ascii=False,indent=2))

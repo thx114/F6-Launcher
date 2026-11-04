@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <UpdaterSourceRoot Condition="'$(UpdaterSourceRoot)' == ''">../HoYoShadeHub</UpdaterSourceRoot>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../HoYoShadeHub.Extensions/HoYoShadeHub.Extensions.csproj" />
+    <PackageReference Include="NuGet.Versioning" Version="7.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.11" />
+    <Compile Include="$(UpdaterSourceRoot)/Features/Update/GithubUpdateService.cs" Link="GithubUpdateService.cs" />
+    <Compile Include="$(UpdaterSourceRoot)/Helpers/PortableUpdatePolicy.cs" Link="PortableUpdatePolicy.cs" />
+    <Compile Include="$(UpdaterSourceRoot)/Helpers/LauncherCommandLine.cs" Link="LauncherCommandLine.cs" />
+  </ItemGroup>
+</Project>

@@ -34,10 +34,15 @@ def main():
                     outgoing.write(chunk)
                     sha.update(chunk)
             rows[info.filename] = sha.hexdigest()
-    required = {'F6Launcher.exe', 'version.ini', 'LICENSE', 'Starward_LICENSE', 'NOTICE.md', f'app-{version}/F6Launcher.exe'}
+    required = {'F6Launcher.exe', 'version.ini', 'LICENSE', 'Starward_LICENSE', 'NOTICE.md', f'app-{version}/F6Launcher.exe', f'app-{version}/HoYoShadeHub.exe'}
     if not required.issubset(rows):
         raise ValueError('Missing application entry')
     with zipfile.ZipFile(partial) as target:
+        # The old updater validates this name before it can install any new code.
+        if target.read('version.ini').decode('utf-8-sig').strip() != f'exe_path=app-{version}\\HoYoShadeHub.exe':
+            raise ValueError('Updater target is incompatible with legacy-name-only installed updaters')
+        if rows[f'app-{version}/HoYoShadeHub.exe'] != rows[f'app-{version}/F6Launcher.exe']:
+            raise ValueError('Compatibility entry must be the F6 application host')
         if set(target.namelist()) != set(rows):
             raise ValueError('Updater membership mismatch')
         for name, sha in rows.items():
