@@ -7,7 +7,7 @@
   布局：
 
       version.ini
-      HoYoShadeHub.exe
+      F6Launcher.exe
       app-<版本>\
       HoYoShade\
           ReShade64.dll  inject.exe  ReShade.ini  *.bat  LICENSE  ReShade_LICENSE
@@ -300,7 +300,7 @@ try {
     $staleShade = Join-Path $outDir "HoYoShade"
     Remove-PackageArtifact -LiteralPath $staleShade -AllowedRoot $outDir -Records $cleanupRecords
 
-    # 1) 基础便携包（app-<版本> + version.ini + HoYoShadeHub.exe）
+    # 1) 基础便携包（app-<版本> + version.ini + F6Launcher.exe）
     if (-not $SkipBaseBuild) {
         Write-Host "==> 先构建基础便携包" -ForegroundColor Cyan
         & (Join-Path $repoRoot "package.ps1") -Version $Version -Architecture $Architecture -Configuration $Configuration -Output $Output -SkipVerify -SkipZip
@@ -430,7 +430,7 @@ try {
     $zipFs = [System.IO.File]::Open($zipFull, [System.IO.FileMode]::Create)
     $zipArchive = New-Object System.IO.Compression.ZipArchive -ArgumentList @($zipFs, [System.IO.Compression.ZipArchiveMode]::Create)
 
-    # 条目名相对输出目录（zip 根上就是 version.ini / HoYoShadeHub.exe / app-<版本>/ / HoYoShade/）
+    # 条目名相对输出目录（zip 根上就是 version.ini / F6Launcher.exe / app-<版本>/ / HoYoShade/）
     $prefixLen = $outDir.TrimEnd("\").Length + 1
     Get-ChildItem -LiteralPath $outDir -Recurse -File -Force | ForEach-Object {
         $entryName = $_.FullName.Substring($prefixLen).Replace("\", "/")
@@ -465,7 +465,7 @@ try {
                 ".portable",
                 "version.ini",
                 "portable-layout.json",
-                "HoYoShadeHub.exe",
+                "F6Launcher.exe",
                 "app-$Version/F6Launcher.exe",
                 "HoYoShade/ReShade64.dll",
                 "HoYoShade/inject.exe",

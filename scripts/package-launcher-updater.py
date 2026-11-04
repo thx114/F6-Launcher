@@ -26,7 +26,7 @@ def main():
     rows = {}
     with zipfile.ZipFile(full) as source, zipfile.ZipFile(partial, 'x', zipfile.ZIP_DEFLATED, compresslevel=6) as target:
         for info in source.infolist():
-            if info.is_dir() or not (info.filename in ('HoYoShadeHub.exe', 'F6Launcher.exe', 'version.ini', 'LICENSE', 'Starward_LICENSE', 'NOTICE.md') or info.filename.startswith(f'app-{version}/')):
+            if info.is_dir() or not (info.filename in ('F6Launcher.exe', 'version.ini', 'LICENSE', 'Starward_LICENSE', 'NOTICE.md') or info.filename.startswith(f'app-{version}/')):
                 continue
             sha = hashlib.sha256()
             with source.open(info) as incoming, target.open(info.filename, 'w', force_zip64=True) as outgoing:
@@ -34,7 +34,7 @@ def main():
                     outgoing.write(chunk)
                     sha.update(chunk)
             rows[info.filename] = sha.hexdigest()
-    required = {'HoYoShadeHub.exe', 'F6Launcher.exe', 'version.ini', 'LICENSE', 'Starward_LICENSE', 'NOTICE.md', f'app-{version}/HoYoShadeHub.exe'}
+    required = {'F6Launcher.exe', 'version.ini', 'LICENSE', 'Starward_LICENSE', 'NOTICE.md', f'app-{version}/F6Launcher.exe'}
     if not required.issubset(rows):
         raise ValueError('Missing application entry')
     with zipfile.ZipFile(partial) as target:

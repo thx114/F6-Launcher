@@ -28,7 +28,7 @@ internal class UrlProtocolService
         string exe;
         if (AppConfig.IsPortable)
         {
-            exe = AppConfig.HoYoShadeHubLauncherExecutePath ?? Path.Join(Path.GetDirectoryName(AppContext.BaseDirectory.TrimEnd('\\', '/')), "HoYoShadeHub.exe");
+            exe = AppConfig.HoYoShadeHubLauncherExecutePath ?? Path.Join(Path.GetDirectoryName(AppContext.BaseDirectory.TrimEnd('\\', '/')), "F6Launcher.exe");
         }
         else
         {
@@ -39,7 +39,7 @@ internal class UrlProtocolService
             """;
         Registry.SetValue(@"HKEY_CURRENT_USER\Software\Classes\F6Launcher", "", "URL:F6Launcher Protocol");
         Registry.SetValue(@"HKEY_CURRENT_USER\Software\Classes\F6Launcher", "URL Protocol", "");
-        Registry.SetValue(@"HKEY_CURRENT_USER\Software\Classes\F6Launcher\DefaultIcon", "", "HoYoShadeHub.exe,1");
+        Registry.SetValue(@"HKEY_CURRENT_USER\Software\Classes\F6Launcher\DefaultIcon", "", $"\"{exe}\",0");
         Registry.SetValue(@"HKEY_CURRENT_USER\Software\Classes\F6Launcher\Shell\Open\Command", "", command);
     }
 

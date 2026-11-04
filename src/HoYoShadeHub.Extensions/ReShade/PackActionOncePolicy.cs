@@ -37,7 +37,7 @@ public static class PackActionOncePolicy
     /// <summary>生产与回归共用的包门：锁前后检查同一授权快照，随后只登记该快照的完整 plan。</summary>
     public static async Task<ExecutionResult> RunSnapshotAsync(PackAutoAction action, PackAutoActionSnapshot snapshot,
         string packRoot, Func<bool> isCurrent, Func<PackActionStep, Task<string>> dispatch, Action<string>? report = null,
-        Func<string, byte[]>? readBytes = null)
+        Func<string, byte[]>? readBytes = null, Func<PackActionStep, Task<bool>>? confirmPendingIniRetry = null)
     {
         bool Current() => isCurrent() && snapshot.IsCurrent(packRoot, readBytes);
         try
@@ -49,7 +49,7 @@ public static class PackActionOncePolicy
             var plan = ledger.RegisterPlan(PlanKeys(snapshot.LoadActions()));
             if (plan == PackOnceLedger.PlanRegistration.NeedsMigration && ledger.HasPlan)
                 return Block("✗ 包出现未获权逻辑身份；普通 hash 同意不扩 plan，需显式迁移，批次已阻断。", BlockReason.NeedsMigration);
-            return await RunStepsAsync(captured, true, ledger, dispatch, Current, report);
+            return await RunStepsAsync(captured, true, ledger, dispatch, Current, report, confirmPendingIniRetry);
         }
         catch (Exception ex)
         {
@@ -60,7 +60,7 @@ public static class PackActionOncePolicy
     /// <summary>生产与回归共用的步骤链：success skip 可继续；一旦 blocked，后续副作用为零。</summary>
     public static async Task<ExecutionResult> RunStepsAsync(PackAutoAction action, bool fromPack,
         PackOnceLedger.Session? ledger, Func<PackActionStep, Task<string>> dispatch,
-        Func<bool> isCurrent, Action<string>? report = null)
+        Func<bool> isCurrent, Action<string>? report = null, Func<PackActionStep, Task<bool>>? confirmPendingIniRetry = null)
     {
         var outcomes = new List<string>();
         ExecutionResult Stop(string note, BlockReason reason)
@@ -86,7 +86,19 @@ public static class PackActionOncePolicy
                         return isCurrent() ? note : "✗ 执行期间上下文已变化，可能部分完成；保留 pending。";
                     });
                     if (result.Reservation == PackOnceLedger.Reservation.Pending)
-                        return Stop($"✗ {step.Action}：pending/可能部分执行；需显式核验迁移，当前动作及批次已阻断。", BlockReason.Pending);
+                    {
+                        if (!PackIniAction.IsIniAction(step) || confirmPendingIniRetry is null
+                            || !await confirmPendingIniRetry(step))
+                            return Stop($"✗ {step.Action}：pending/可能部分执行；需显式核验迁移，当前动作及批次已阻断。", BlockReason.Pending);
+                        if (!isCurrent()) return Stop("✗ 重试确认期间上下文已变化；未执行。", BlockReason.ContextChanged);
+                        ledger.ConfirmPendingIniRetry(StableKey(action.Name, index, step), step);
+                        result = await ledger.ExecuteAsync(StableKey(action.Name, index, step), LegacyKey(step), async () =>
+                        {
+                            if (!isCurrent()) return "✗ 上下文已变化；未执行。";
+                            string note = await dispatch(step);
+                            return isCurrent() ? note : "✗ 执行期间上下文已变化，可能部分完成；保留 pending。";
+                        });
+                    }
                     if (result.Reservation == PackOnceLedger.Reservation.NeedsMigration)
                         return Stop($"✗ {step.Action}：未知逻辑身份/旧 raw 无法精确迁移；不能推断已完成，当前动作及批次已阻断。", BlockReason.NeedsMigration);
                     outcome = result.Reservation == PackOnceLedger.Reservation.Success

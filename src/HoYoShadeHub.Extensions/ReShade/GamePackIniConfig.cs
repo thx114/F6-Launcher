@@ -115,56 +115,57 @@ public sealed class GamePackIniConfig
     /// <summary>把这个配置写进游戏 ini（幂等；有实际改动才落盘）。返回有没有写入。</summary>
     public bool Apply(string iniPath)
     {
-        if (IsEmpty || string.IsNullOrWhiteSpace(iniPath) || !File.Exists(iniPath))
+        try { return ApplyStrict(iniPath); }
+        catch { return false; }
+    }
+
+    /// <summary>显式覆盖包动作必须区分“值相同”与写入失败，避免失败被记成 once 成功。</summary>
+    public bool ApplyStrict(string iniPath)
+    {
+        if (IsEmpty)
         {
             return false;
         }
+        if (string.IsNullOrWhiteSpace(iniPath) || !File.Exists(iniPath))
+            throw new FileNotFoundException("目标 INI 不存在。", iniPath);
+        IniDocument ini = IniDocument.Load(iniPath);
+        bool changed = false;
 
-        try
+        foreach ((string section, Dictionary<string, string> keys) in Set)
         {
-            IniDocument ini = IniDocument.Load(iniPath);
-            bool changed = false;
-
-            foreach ((string section, Dictionary<string, string> keys) in Set)
+            foreach ((string key, string value) in keys)
             {
-                foreach ((string key, string value) in keys)
-                {
-                    // 包里写成 36,,0,,0,,0 的热键值会让 ReShade 直接不绑这个键（Home 打不开菜单），
-                    // 而且这是**每次启动都重新写**的一条路 —— 用户手改 ini 会被它一直盖回坏值。
-                    string wanted = ReShadeHotkeys.TryNormalize(section, key, value, out string repaired)
-                        ? repaired
-                        : value;
+                // 包里写成 36,,0,,0,,0 的热键值会让 ReShade 直接不绑这个键（Home 打不开菜单），
+                // 而且这是**每次启动都重新写**的一条路 —— 用户手改 ini 会被它一直盖回坏值。
+                string wanted = ReShadeHotkeys.TryNormalize(section, key, value, out string repaired)
+                    ? repaired
+                    : value;
 
-                    if (!string.Equals(ini.GetValue(section, key), wanted, StringComparison.Ordinal))
-                    {
-                        ini.SetValue(section, key, wanted);
-                        changed = true;
-                    }
+                if (!string.Equals(ini.GetValue(section, key), wanted, StringComparison.Ordinal))
+                {
+                    ini.SetValue(section, key, wanted);
+                    changed = true;
                 }
             }
+        }
 
-            foreach ((string section, List<string> keys) in Remove)
+        foreach ((string section, List<string> keys) in Remove)
+        {
+            foreach (string key in keys)
             {
-                foreach (string key in keys)
+                if (ini.ContainsKey(section, key))
                 {
-                    if (ini.ContainsKey(section, key))
-                    {
-                        ini.RemoveKey(section, key);
-                        changed = true;
-                    }
+                    ini.RemoveKey(section, key);
+                    changed = true;
                 }
             }
-
-            if (changed)
-            {
-                ini.Save(iniPath);
-            }
-
-            return changed;
         }
-        catch
+
+        if (changed)
         {
-            return false;
+            ini.Save(iniPath);
         }
+
+        return changed;
     }
 }

@@ -9,7 +9,7 @@ with tempfile.TemporaryDirectory(prefix='hub-log-path-tests-') as temporary:
     work = Path(temporary)
     (work / 'NuGet.Config').write_text('<configuration><packageSources><clear/><add key="nuget.org" value="https://api.nuget.org/v3/index.json" /></packageSources></configuration>')
     policy = collector.read_text(encoding='utf-8-sig').split('// Pure path policy kept with the collector', 1)[1]
-    (work / 'Policy.cs').write_text('using HoYoShadeHub.Extensions.ReShade;\n' + '// Pure path policy kept with the collector' + policy)
+    (work / 'Policy.cs').write_text('using HoYoShadeHub.Extensions.ReShade;\nusing HoYoShadeHub.Extensions.Diagnostics;\n' + '// Pure path policy kept with the collector' + policy)
     reference = root / 'src/HoYoShadeHub.Extensions/HoYoShadeHub.Extensions.csproj'
     (work / 'Tests.csproj').write_text(f'<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup><ItemGroup><ProjectReference Include="{reference}" /></ItemGroup></Project>')
     (work / 'Program.cs').write_text(r'''

@@ -150,18 +150,21 @@ public static class NrRuntimeLibrary
     /// <summary>独立加载目录避免共享构建被不同游戏的 NR 选择互相覆盖；配置独立、DLL 硬链接。</summary>
     public static string PrepareOpti(string cacheRoot, string gameKey, string buildId, string dllPath, string? version)
     {
+        dllPath = Path.GetFullPath(dllPath);
         string sourceRoot = Path.GetDirectoryName(dllPath)!;
         string targetRoot = OptiDirectory(cacheRoot, gameKey, buildId);
+        // 一次验证同一份载荷，两个复制/NR 绑定阶段遵守相同范围；不得把备份内 NR 改成当前版本。
+        IReadOnlyList<string> payload = OptiScalerRuntimePayload.Collect(sourceRoot);
+        if (!payload.Contains(dllPath, StringComparer.OrdinalIgnoreCase))
+            throw new IOException("OptiScaler 主 DLL 不在可部署的运行载荷中：" + dllPath);
         string defaultNr = Path.Combine(sourceRoot, FileName);
         string nr = version is not null ? VersionFile(cacheRoot, version)
             : File.Exists(defaultNr) ? Intern(cacheRoot, defaultNr)
             : throw new FileNotFoundException("构建默认 NR 缺失，请先在全局插件中补齐。", defaultNr);
-        foreach (string source in Directory.EnumerateFiles(sourceRoot, "*", SearchOption.AllDirectories))
+        foreach (string source in payload)
         {
             string relative = Path.GetRelativePath(sourceRoot, source);
             if (HysxFileLink.IsNeuralRuntime(source)) continue;
-            if ((File.GetAttributes(source) & FileAttributes.ReparsePoint) != 0)
-                throw new IOException("OptiScaler 构建包含不支持的重解析文件：" + source);
             string target = Path.Combine(targetRoot, relative);
             Directory.CreateDirectory(Path.GetDirectoryName(target)!);
             if (Path.GetExtension(source).Equals(".dll", StringComparison.OrdinalIgnoreCase))
@@ -172,7 +175,7 @@ public static class NrRuntimeLibrary
         }
         HysxFileLink.LinkNeuralRuntime(nr, Path.Combine(targetRoot, FileName));
         // 某些构建从组件子目录加载 NR，同时绑定，避免落回包自带版本。
-        foreach (string source in Directory.EnumerateFiles(sourceRoot, FileName, SearchOption.AllDirectories))
+        foreach (string source in payload.Where(HysxFileLink.IsNeuralRuntime))
             HysxFileLink.LinkNeuralRuntime(nr, Path.Combine(targetRoot, Path.GetRelativePath(sourceRoot, source)));
         return Path.Combine(targetRoot, Path.GetFileName(dllPath));
     }

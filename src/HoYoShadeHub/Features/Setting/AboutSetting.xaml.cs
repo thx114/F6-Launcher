@@ -349,7 +349,7 @@ public sealed partial class AboutSetting : PageBase
     {
         if (!GithubUpdateService.Restart())
         {
-            GithubStatusText = "找不到便携包启动器（HoYoShadeHub.exe），请自己手动重启。";
+            GithubStatusText = "找不到便携包启动器（F6Launcher.exe），请自己手动重启。";
         }
     }
 

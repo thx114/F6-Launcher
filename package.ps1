@@ -6,7 +6,7 @@
     产出便携版目录结构：
 
         <Output>\
-        ├─ HoYoShadeHub.exe       外层启动器（自包含单文件，双击入口）
+        ├─ F6Launcher.exe         外层启动器（自包含单文件，双击入口）
         ├─ version.ini            exe_path=app-<版本>\F6Launcher.exe
         └─ app-<版本>\            主程序（dotnet publish，自包含、ReadyToRun）
 
@@ -154,7 +154,7 @@ try {
         --nologo
     if ($LASTEXITCODE -ne 0) { throw "主程序 publish 失败（exit $LASTEXITCODE）" }
 
-    Write-Host "==> 发布外层启动器 => HoYoShadeHub.exe" -ForegroundColor Cyan
+    Write-Host "==> 发布外层启动器 => F6Launcher.exe" -ForegroundColor Cyan
     & $dotnet publish src/HoYoShadeHub.PortableLauncher `
         -c $Configuration `
         -r "win-$Architecture" `
@@ -168,9 +168,10 @@ try {
         --nologo
     if ($LASTEXITCODE -ne 0) { throw "启动器 publish 失败（exit $LASTEXITCODE）" }
 
-    Move-Item (Join-Path $staleLauncher "HoYoShadeHub.exe") (Join-Path $outDir "HoYoShadeHub.exe") -Force
-    # Independent entry point; keep the historical filename for existing updater contracts.
-    Copy-Item -LiteralPath (Join-Path $outDir 'HoYoShadeHub.exe') -Destination (Join-Path $outDir 'F6Launcher.exe') -Force
+    Move-Item (Join-Path $staleLauncher "HoYoShadeHub.exe") (Join-Path $outDir "F6Launcher.exe") -Force
+    # New distributions have one root executable. Legacy names remain a read-only runtime fallback.
+    $legacyLauncher = Join-Path $outDir 'HoYoShadeHub.exe'
+    if (Test-Path -LiteralPath $legacyLauncher) { throw "打包暂存含旧入口，请使用干净输出目录：$legacyLauncher" }
     Remove-PackageArtifact -LiteralPath $staleLauncher -AllowedRoot $outDir -Records $packageCleanup
 
     Set-Content -Path (Join-Path $outDir "version.ini") `
@@ -260,9 +261,10 @@ try {
             $entryCount++
         }
         if ($entryCount -ne @(Get-ChildItem -LiteralPath $outDir -Recurse -File -Force).Count) { throw 'ZIP 条目数与源目录不一致。' }
-        foreach ($required in @('HoYoShadeHub.exe', 'version.ini', "app-$Version/F6Launcher.exe", "app-$Version/F6Launcher.dll")) {
+        foreach ($required in @('F6Launcher.exe', 'version.ini', "app-$Version/F6Launcher.exe", "app-$Version/F6Launcher.dll")) {
             if ($required -notin $check.Entries.FullName) { throw "普通包缺少必要条目：$required" }
         }
+        if ('HoYoShadeHub.exe' -in $check.Entries.FullName) { throw '普通包不应包含旧版根入口 HoYoShadeHub.exe。' }
         if (@($check.Entries | Where-Object { $_.FullName -like 'HoYoShade/*' }).Count) { throw '普通包不应包含 HoYoShade 框架。' }
         $check.Dispose()
         Write-Host "    校验通过，条目数：$entryCount" -ForegroundColor DarkGray

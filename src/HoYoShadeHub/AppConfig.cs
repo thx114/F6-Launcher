@@ -63,8 +63,8 @@ public static class AppConfig
 
             IsAppInRemovableStorage = DriveHelper.IsDeviceRemovableOrOnUSB(AppContext.BaseDirectory);
             string? parentFolder = new DirectoryInfo(AppContext.BaseDirectory).Parent?.FullName;
-            string launcherExe = Path.Join(parentFolder, "HoYoShadeHub.exe");
-            if (Directory.Exists(parentFolder) && File.Exists(launcherExe))
+            string? launcherExe = HoYoShadeHub.Core.IO.PortableLauncherLocation.Find(parentFolder);
+            if (launcherExe is not null)
             {
                 IsPortable = true;
                 InstallType = HoYoShadeHub.RPC.Update.Metadata.InstallType.Portable;

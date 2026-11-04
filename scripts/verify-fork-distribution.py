@@ -27,8 +27,9 @@ for path in args.archives:
                 raise ValueError('F6 artwork mismatch')
         if prefix+'Assets/logo.png' in names or prefix+'Assets/logo.ico' in names:
             raise ValueError('Upstream product artwork included')
-        if z.read('F6Launcher.exe')!=z.read('HoYoShadeHub.exe'):
-            raise ValueError('Compatibility launcher differs')
+        root_executables={n for n in names if '/' not in n and n.lower().endswith('.exe')}
+        if root_executables != {'F6Launcher.exe'}:
+            raise ValueError('Expected only F6Launcher.exe at archive root: '+repr(root_executables))
         scanned=0
         for name in names:
             if not name.startswith(prefix) or not name.endswith(('.dll','.exe','.json','.xaml','.pri')): continue

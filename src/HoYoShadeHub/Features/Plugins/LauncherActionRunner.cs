@@ -100,9 +100,18 @@ public static partial class LauncherActionRunner
             : [action];
         if (await CheckLauncherRequirementsAsync(requirementActions, context) is { } unmet) return unmet;
         if (!Current()) return PackActionOncePolicy.Block("✗ 版本检查期间上下文已变化；动作批次已阻断。", PackActionOncePolicy.BlockReason.ContextChanged);
+        if (fromPack && !snapshot!.IsCurrent(context.PackRoot!))
+            return PackActionOncePolicy.Block("✗ 覆盖包内容已变化，未初始化 INI；请重新确认。", PackActionOncePolicy.BlockReason.ContextChanged);
+        try { GameLaunchIniPreparation.EnsurePackActionTarget(context.Entry, context.Host, [action]); }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Cannot prepare package ReShade.ini target");
+            return PackActionOncePolicy.Block("✗ 覆盖包 INI 初始化失败：" + ex.Message, PackActionOncePolicy.BlockReason.Failed);
+        }
         if (fromPack)
             return await PackActionOncePolicy.RunSnapshotAsync(action, snapshot!, context.PackRoot!, Current,
-                step => DispatchStepAsync(step, context), context.Report);
+                step => DispatchStepAsync(step, context), context.Report,
+                confirmPendingIniRetry: step => ConfirmPendingIniRetryAsync(step, context));
         bool needsLedger = action.Steps.Any(step => PackActionOncePolicy.RequiresOnce(fromPack, step));
         PackOnceLedger.Session? ledger = null;
         try
@@ -127,6 +136,23 @@ public static partial class LauncherActionRunner
             return PackActionOncePolicy.Block($"✗ once 账本或上下文不可用；动作批次已阻断：{ex.Message}", PackActionOncePolicy.BlockReason.LedgerUnavailable);
         }
         finally { ledger?.Dispose(); }
+    }
+
+    private static async Task<bool> ConfirmPendingIniRetryAsync(PackActionStep step, LauncherActionContext context)
+    {
+        if (!context.Interactive || context.XamlRoot is null || !PackIniAction.IsIniAction(step)) return false;
+        string target = PackIniAction.ResolveTarget(step, context.Entry);
+        var dialog = new ContentDialog
+        {
+            XamlRoot = context.XamlRoot,
+            Title = "重试未完成的 INI 配置？",
+            Content = $"上次这个配置步骤未完成：\n{target}\n\n"
+                + "重试会按覆盖包写入此步骤指定的键，保留其他设置和已完成动作。缺少 ReShade.ini 时将自动生成。",
+            PrimaryButtonText = "重试此 INI 步骤",
+            CloseButtonText = "暂不重试",
+            DefaultButton = ContentDialogButton.Close,
+        };
+        return await dialog.ShowAsync() == ContentDialogResult.Primary;
     }
 
     private static async Task<string> DispatchStepAsync(PackActionStep step, LauncherActionContext context)
@@ -573,13 +599,16 @@ public static partial class LauncherActionRunner
             return "✗ set_addons 缺 enabled 参数";
         }
 
-        if (context.Plugins is null)
+        GamePluginService? plugins = context.Plugins;
+        if (plugins is null && context.Entry is not null)
+            plugins = GamePluginServiceFactory.Create(context.Entry, context.Host);
+        if (plugins is null)
         {
             return "✗ 这个游戏还没有 ReShade.ini，插件开关不可用";
         }
 
         List<string> files = step.GetStringList("files");
-        List<GameAddonState> addons = context.Plugins.GetAddons();
+        List<GameAddonState> addons = plugins.GetAddons();
         List<GameAddonState> targets = files.Count == 0
             ? addons
             : addons.Where(a => files.Any(f =>
@@ -593,7 +622,7 @@ public static partial class LauncherActionRunner
         int ok = 0;
         foreach (GameAddonState addon in targets)
         {
-            if (context.Plugins.SetAddonEnabled(addon.FileName, enabled.Value))
+            if (plugins.SetAddonEnabled(addon.FileName, enabled.Value))
             {
                 ok++;
             }
@@ -727,99 +756,24 @@ public static partial class LauncherActionRunner
     /// <summary>
     /// set_ini_keys：把任意节/键写进 ini（默认游戏 ReShade.ini；file= 可指游戏目录内的其它 ini，
     /// 相对路径）。set = { "节": { "键": "值" } }，remove = { "节": ["键"] }。
-    /// once=true 时整个步骤只执行一次 —— 按步骤内容哈希在包根 .hysx_once.json 记账，
-    /// 改包里的步骤内容会自动重新执行。导入覆盖包后"改一次 ini 就放手"靠它。
+    /// 包动作按逻辑步骤在 .hysx_once.json 记账；已成功步骤不重跑。
+    /// 首次使用可生成目标 INI；历史 pending 仅在用户明确确认后重试此配置步骤。
     /// </summary>
     private static string SetIniKeys(PackActionStep step, LauncherActionContext context)
     {
-        string? iniPath;
-        if (step.GetString("file") is { Length: > 0 } file)
+        string target = step.GetString("file") ?? "ReShade.ini";
+        try
         {
-            string? gameDir = context.Entry?.GameDirectory;
-            if (string.IsNullOrWhiteSpace(gameDir))
-            {
-                return "✗ set_ini_keys：没有当前游戏目录";
-            }
-
-            iniPath = Path.GetFullPath(Path.Combine(gameDir, file));
+            target = PackIniAction.ResolveTarget(step, context.Entry);
+            PackIniAction.Result result = PackIniAction.Apply(step, context.Entry, context.Host);
+            return $"已写入 {Path.GetFileName(result.Path)}：set {result.SetKeys} 键 / remove {result.RemoveKeys} 键"
+                + (result.Created ? "（首次生成）" : result.Changed ? string.Empty : "（值相同，无改动）");
         }
-        else
+        catch (Exception ex)
         {
-            iniPath = context.Entry?.ReShadeIniPath;
+            _logger.LogWarning(ex, "Cannot apply package INI action to {Target}", target);
+            return $"✗ set_ini_keys：无法写入 {target}：{ex.Message}";
         }
-
-        if (string.IsNullOrWhiteSpace(iniPath) || !File.Exists(iniPath))
-        {
-            return "✗ set_ini_keys：找不到目标 ini（游戏要先启动过一次生成 ReShade.ini）";
-        }
-
-        var config = new GamePackIniConfig();
-        int setCount = 0, removeCount = 0;
-
-        if (step.Raw.ValueKind == JsonValueKind.Object
-            && step.Raw.TryGetProperty("set", out JsonElement set) && set.ValueKind == JsonValueKind.Object)
-        {
-            foreach (JsonProperty section in set.EnumerateObject())
-            {
-                if (section.Value.ValueKind != JsonValueKind.Object)
-                {
-                    continue;
-                }
-
-                if (!config.Set.TryGetValue(section.Name, out Dictionary<string, string>? pairs))
-                {
-                    pairs = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                }
-
-                foreach (JsonProperty key in section.Value.EnumerateObject())
-                {
-                    pairs[key.Name] = key.Value.ValueKind == JsonValueKind.String
-                        ? key.Value.GetString() ?? string.Empty
-                        : key.Value.ToString();
-                    setCount++;
-                }
-
-                config.Set[section.Name] = pairs;
-            }
-        }
-
-        if (step.Raw.ValueKind == JsonValueKind.Object
-            && step.Raw.TryGetProperty("remove", out JsonElement remove) && remove.ValueKind == JsonValueKind.Object)
-        {
-            foreach (JsonProperty section in remove.EnumerateObject())
-            {
-                if (section.Value.ValueKind != JsonValueKind.Array)
-                {
-                    continue;
-                }
-
-                if (!config.Remove.TryGetValue(section.Name, out List<string>? keys))
-                {
-                    keys = [];
-                }
-
-                foreach (JsonElement key in section.Value.EnumerateArray())
-                {
-                    if (key.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(key.GetString()))
-                    {
-                        keys.Add(key.GetString()!);
-                        removeCount++;
-                    }
-                }
-
-                config.Remove[section.Name] = keys;
-            }
-        }
-
-        if (config.IsEmpty)
-        {
-            return "✗ set_ini_keys：没有 set / remove 内容";
-        }
-
-        bool changed = config.Apply(iniPath);
-
-        return $"已写入 {Path.GetFileName(iniPath)}：set {setCount} 键 / remove {removeCount} 键"
-               + (changed ? string.Empty : "（值相同，无改动）");
     }
 
     // ==================== 启动选项 ====================

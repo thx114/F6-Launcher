@@ -13,7 +13,7 @@ namespace HoYoShadeHub.PortableLauncher;
 /// </para>
 /// <list type="number">
 /// <item>读同目录 <c>version.ini</c> 里的 <c>exe_path</c>，把参数原样传给它跑起来；</item>
-/// <item>没有 version.ini 就扫 <c>app-*</c> 子目录，挑最新那个 <c>HoYoShadeHub.exe</c>；</item>
+/// <item>没有 version.ini 就扫 <c>app-*</c> 子目录，挑最新的 <c>F6Launcher.exe</c>，兼容旧文件名；</item>
 /// <item>保留其它 <c>app-*</c> 目录供回退；启动不承担旧版本清理。</item>
 /// <item>什么都找不到 → 弹窗问要不要去下载。</item>
 /// </list>
@@ -24,8 +24,7 @@ namespace HoYoShadeHub.PortableLauncher;
 /// </para>
 ///
 /// <para>
-/// 附带一个作用：App 判定「便携版」的依据就是**父目录里存在 HoYoShadeHub.exe**
-/// （见 AppConfig），所以这个文件同时也是那个标记。
+/// App 与 RPC 优先以父目录里的 F6Launcher.exe 识别便携包，兼容已安装的旧入口。
 /// </para>
 /// </summary>
 internal static class Program

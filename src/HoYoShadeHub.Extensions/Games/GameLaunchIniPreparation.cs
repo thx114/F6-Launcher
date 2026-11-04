@@ -10,15 +10,44 @@ public static class GameLaunchIniPreparation
     {
         bool needsReShade = actions.SelectMany(action => action.Steps).Any(step =>
             step.Action.Trim().ToLowerInvariant() is "set_addons" or "set_addon" or "apply_preset"
-            || (step.Action.Equals("set_ini_keys", StringComparison.OrdinalIgnoreCase)
-                && string.IsNullOrWhiteSpace(step.GetString("file"))));
+            || (PackIniAction.IsIniAction(step) && PackIniAction.UsesReShadeIni(step)));
         if (!needsReShade) return;
+        EnsureReShadeTarget(entry, host);
+    }
+
+    public static string EnsureReShadeTarget(GameEntry? entry, ShadeHost? host)
+    {
         string? target = entry?.ReShadeIniPath;
-        if (target is not null && File.Exists(target)) return;
-        if (string.IsNullOrWhiteSpace(target) || host is null || !File.Exists(host.ReShadeIniPath))
-            throw new IOException("Cannot prepare the package's ReShade.ini target: game path or host template is unavailable.");
-        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(target))!);
-        try { File.Copy(host.ReShadeIniPath, target, overwrite: false); }
-        catch (IOException) when (File.Exists(target)) { }
+        if (target is not null && File.Exists(target)) return target;
+        if (string.IsNullOrWhiteSpace(target))
+            throw new IOException("无法准备 ReShade.ini：当前游戏目录未确定。");
+        if (host is null || (!File.Exists(host.ReShadeIniPath) && !host.Exists))
+            throw new IOException($"无法生成 {target}：没有可用的 ReShade 宿主或模板（{host?.ReShadeIniPath ?? "未指定"}）。");
+        string directory = Path.GetDirectoryName(Path.GetFullPath(target))!;
+        if (!Directory.Exists(directory))
+            throw new DirectoryNotFoundException($"游戏目录不存在：{directory}");
+        string temp = Path.Combine(directory, ".f6-reshade-" + Guid.NewGuid().ToString("N") + ".tmp");
+        try
+        {
+            if (File.Exists(host.ReShadeIniPath))
+                File.Copy(host.ReShadeIniPath, temp, overwrite: false);
+            else
+            {
+                // A fresh/portable host may have its DLL and plugins but no generated template yet.
+                // Seed the game directly; do not require running the game or modifying the shared host.
+                var ini = IniDocument.CreateEmpty();
+                ini.SetValue("GENERAL", "EffectSearchPaths", Path.Combine(host.RootPath, "reshade-shaders", "Shaders", "**"));
+                ini.SetValue("GENERAL", "TextureSearchPaths", Path.Combine(host.RootPath, "reshade-shaders", "Textures", "**"));
+                ini.SetValue("ADDON", "AddonPath", host.AddonsPath);
+                ini.SetValue("INPUT", "KeyOverlay", "36,0,0,0");
+                ini.SetValue("INPUT", "GamepadNavigation", "0");
+                ini.SetValue("OVERLAY", "TutorialProgress", GameIniBootstrap.TutorialDoneValue);
+                ini.Save(temp);
+            }
+            try { File.Move(temp, target, overwrite: false); }
+            catch (IOException) when (File.Exists(target)) { }
+        }
+        finally { if (File.Exists(temp)) File.Delete(temp); }
+        return target;
     }
 }

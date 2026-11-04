@@ -31,6 +31,8 @@ internal static class LauncherRegressionTests
         await Run("Profile integrity", () => { OptiScalerProfileIntegrityTests.Run(); return Task.CompletedTask; });
         await Run("Launch profile recovery", () => { OptiScalerLaunchRecoveryTests.Run(); return Task.CompletedTask; });
         await Run("Launch INI target preparation", () => { GameLaunchIniPreparationTests.Run(); return Task.CompletedTask; });
+        await Run("Pack INI first install and pending recovery", async () => { await PackIniActionTests.RunAsync(); });
+        await Run("Portable F6-only entry", () => { PortableLauncherLocationTests.Run(); return Task.CompletedTask; });
         await Run("Preset selection", () => { OptiScalerPresetSelectionTests.Run(); return Task.CompletedTask; });
         await Run("Package installation", PackageInstallSafetyTests.RunAsync);
         await Run("Package drop input", () => { PackageDropInputTests.Run(); return Task.CompletedTask; });

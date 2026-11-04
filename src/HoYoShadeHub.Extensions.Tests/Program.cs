@@ -13,6 +13,22 @@ using System.IO.Compression;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
+if (args.Length == 1 && args[0] == "portable-entry-tests")
+{
+    HoYoShadeHub.Extensions.Tests.PortableLauncherLocationTests.Run();
+    return 0;
+}
+
+if (args.Length == 1 && args[0] == "pack-ini-tests")
+{
+    await HoYoShadeHub.Extensions.Tests.PackIniActionTests.RunAsync();
+    HoYoShadeHub.Extensions.Tests.GameLaunchIniPreparationTests.Run();
+    return 0;
+}
+
+if (args.Length == 1 && args[0] == "session-artifact-tests")
+    return HoYoShadeHub.Extensions.Tests.SessionArtifactFilesTests.Run();
+
 if (args.Length == 1 && args[0] == "exact-stop-tests")
     return await HoYoShadeHub.Extensions.Tests.ExactProcessStopTests.RunAsync();
 

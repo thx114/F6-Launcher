@@ -330,6 +330,10 @@ public static class OverlayPackActionPrompter
                     }
                     PackActionConsent.Save(id.GameBiz.Value, hash, disabled);
 
+                    // 首次安装必须先取得可用目标；失败时停在副作用/once reservation 之前。
+                    GameLaunchIniPreparation.EnsurePackActionTarget(entry, host,
+                        snapshot.LoadActions().Where(action => !disabledSet.Contains(action.Name)));
+
                     // 先把这个游戏的 ini 定向好、包 Addons 铺好，再跑动作：
                     // set_addons 按 AddonPath 目录扫文件写 [ADDON] DisabledAddons，
                     // 目录还没指向包 / 包还没铺时「禁用全部」会扫到空目录或旧目录，白跑一次

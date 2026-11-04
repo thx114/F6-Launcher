@@ -59,8 +59,48 @@ internal static class NrSelectionTests
             string dll = Path.Combine(build, "OptiScaler.dll");
             File.WriteAllText(dll, "dll");
             File.WriteAllText(Path.Combine(build, "OptiScaler.ini"), "original-config");
+            string[] excludedArtifacts =
+            [
+                "OptiScaler_crash_123.dmp", "OPTISCALER_CRASH_456.DMP", "OptiScaler.log",
+                ".nr-present-trace-123.jsonl", ".nr-guide.json", "nr-present-capture.raw",
+                "OptiScaler.dll.pending", "OptiScaler.r829.tmp", "OptiScaler.pdb", "OptiScaler.dll.bak",
+                ".OptiScaler.before-menu-refresh.dll", ".build.before-render-scale.json",
+                ".hub-runtime-owner", ".hub-profile-authority.json",
+                "backup-cc-before-lora7/nvngx_dlssnr.dll", "BACKUP-ht-before3000/OptiScaler.dll",
+                ".deploy-backup-A0E04CF1/OptiScaler.ini", "backups/previous/nvngx_dlssnr.dll",
+                "profile-recovery/old/profiles/hk4e_cn.ini", "current-output-captures/frame/output.raw",
+                "GenshinCapture/session/output.png", "logs/OptiScaler.txt", ".git/objects/object",
+                "plugins/backup-before-upgrade/loader.dll", "plugins/loader.log",
+            ];
+            string[] runtimeAssets =
+            [
+                "plugins/loader.dll", "plugins/loader.asi", "plugins/settings.ini",
+                "models/network.bin", "models/weights.onnx", "assets/noise.png",
+                "OptiScaler/streamline/manifest.json", "OptiScaler/streamline/nvngx_dlssnr.dll",
+                "profiles/hk4e_cn.ini", "LICENSE", "licenses/plugin.txt",
+            ];
+            foreach (string name in excludedArtifacts.Concat(runtimeAssets))
+            {
+                string path = Path.Combine(build, name);
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                File.WriteAllText(path, "fixture:" + name);
+            }
             string gameA = NrRuntimeLibrary.PrepareOpti(cache, "gameA", "source/version", dll, "custom-A");
             string gameB = NrRuntimeLibrary.PrepareOpti(cache, "gameB", "source/version", dll, "custom-B");
+            string runtimeA = Path.GetDirectoryName(gameA)!;
+            Check(excludedArtifacts.All(name => !File.Exists(Path.Combine(runtimeA, name))),
+                "runtime excludes crash dumps, traces, backups, captures and shared ownership state");
+            Check(runtimeAssets.All(name => File.Exists(Path.Combine(runtimeA, name))),
+                "runtime preserves plugins, configuration, models, component data and licenses");
+            Check(HysxFileLink.AreHardLinked(Path.Combine(build, "plugins/loader.dll"), Path.Combine(runtimeA, "plugins/loader.dll")),
+                "nested runtime DLL remains hardlinked");
+            Check(!HysxFileLink.AreHardLinked(Path.Combine(build, "plugins/settings.ini"), Path.Combine(runtimeA, "plugins/settings.ini")),
+                "nested mutable configuration stays a private copy");
+            Check(HysxFileLink.AreHardLinked(a, Path.Combine(runtimeA, "OptiScaler/streamline/nvngx_dlssnr.dll")),
+                "nested component NR uses the selected version");
+            Check(File.ReadAllText(Path.Combine(build, "backup-cc-before-lora7/nvngx_dlssnr.dll"))
+                    == "fixture:backup-cc-before-lora7/nvngx_dlssnr.dll",
+                "NR binding does not traverse or rewrite archived NR backups");
             string nrA = Path.Combine(Path.GetDirectoryName(gameA)!, NrRuntimeLibrary.FileName);
             string nrB = Path.Combine(Path.GetDirectoryName(gameB)!, NrRuntimeLibrary.FileName);
             Check(HysxFileLink.AreHardLinked(a, nrA) && HysxFileLink.AreHardLinked(b, nrB), "two games load independent NR selections via hardlinks");
@@ -70,11 +110,18 @@ internal static class NrSelectionTests
             Check(!File.Exists(Path.Combine(build, NrRuntimeLibrary.FileName)), "NR selection does not alter shared build");
             NrRuntimeLibrary.PrepareOpti(cache, "gameA", "source/version", dll, "custom-B");
             Check(HysxFileLink.AreHardLinked(b, nrA) && File.ReadAllText(a) == "aaaa", "switch rebinds target and preserves old version");
+            Check(HysxFileLink.AreHardLinked(b, Path.Combine(runtimeA, "OptiScaler/streamline/nvngx_dlssnr.dll"))
+                    && excludedArtifacts.All(name => !File.Exists(Path.Combine(runtimeA, name))),
+                "repeat preparation switches nested NR without reintroducing diagnostics");
+            string existingDiagnostic = Path.Combine(runtimeA, "OptiScaler_crash_user-evidence.dmp");
+            File.WriteAllText(existingDiagnostic, "existing-evidence");
             HysxFileLink.LinkNeuralRuntime(a, Path.Combine(build, NrRuntimeLibrary.FileName));
             NrRuntimeLibrary.PrepareOpti(cache, "gameA", "source/version", dll, null);
             Check(HysxFileLink.AreHardLinked(a, nrA)
                 && File.ReadAllText(Path.Combine(Path.GetDirectoryName(gameA)!, "OptiScaler.ini")) == "game-A-config",
                 "return to build default preserves game quality settings");
+            Check(File.ReadAllText(existingDiagnostic) == "existing-evidence",
+                "runtime synchronization does not delete existing diagnostic evidence");
             string pack = Path.Combine(root, "pack");
             var entries = new[] { new AddonPackEntry { FileName = NrRuntimeLibrary.FileName, SourcePath = a } };
             GameAddonPack.Sync(pack, entries, identity: "same");

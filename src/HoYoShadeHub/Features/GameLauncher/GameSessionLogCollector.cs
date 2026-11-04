@@ -72,6 +72,7 @@ internal sealed class GameSessionLogCollector
     private static readonly TimeSpan SnapshotInterval = TimeSpan.FromMinutes(5);
 
     private readonly object _writeGate = new();
+    private readonly object _snapshotGate = new();
     private readonly List<SnapshotSource> _logs;
     private readonly List<SnapshotSource> _configs;
     private readonly List<string> _bridgeDirectories;
@@ -105,9 +106,17 @@ internal sealed class GameSessionLogCollector
     {
         _pid = pid;
         // Injection may finish after OptiScaler opens its log; use the process launch window.
-        if (!manual && process is not null)
+        if (process is not null || pid > 0)
         {
-            try { _startedAt = new DateTimeOffset(process.StartTime); }
+            try
+            {
+                if (process is not null) _startedAt = new DateTimeOffset(process.StartTime);
+                else
+                {
+                    using Process observed = Process.GetProcessById(pid);
+                    _startedAt = new DateTimeOffset(observed.StartTime);
+                }
+            }
             catch { /* Keep collector start when process metadata is unavailable. */ }
         }
         _manual = manual;
@@ -302,8 +311,9 @@ internal sealed class GameSessionLogCollector
             foreach (SnapshotSource source in _logs)
             {
                 string copied = Path.Combine(SessionDirectory, source.Name);
-                if (source.OptiLog is not null && !File.Exists(copied)) continue;
-                sources.Add(new LogDigest.Source(source.Name, File.Exists(copied) ? copied : source.Path));
+                // 未产生本局快照的日志不回退读原路径，否则旧 ReShade/FSR 日志会混入摘要。
+                if (!File.Exists(copied)) continue;
+                sources.Add(new LogDigest.Source(source.Name, copied));
             }
 
             var summary = new System.Text.StringBuilder(160);
@@ -424,6 +434,12 @@ internal sealed class GameSessionLogCollector
 
     private void TakeSnapshot(string reason, bool includeLogs)
     {
+        // 定时快照和进程退出可能同时到达；日志提交与转储归档保持单一执行者。
+        lock (_snapshotGate) TakeSnapshotCore(reason, includeLogs);
+    }
+
+    private void TakeSnapshotCore(string reason, bool includeLogs)
+    {
         try
         {
             if (includeLogs)
@@ -433,7 +449,7 @@ internal sealed class GameSessionLogCollector
                     TryCopyOne(source);
                 }
 
-                CopyRecentOptiScalerDumps();
+                ArchiveRecentOptiScalerDumps();
             }
 
             foreach (SnapshotSource source in _configs)
@@ -447,11 +463,9 @@ internal sealed class GameSessionLogCollector
                 try
                 {
                     SnapshotSource? source = _logs.FirstOrDefault(s => s.Name == entry.Name);
-                    string? observedPath = source?.OptiLog is { } opti
-                        ? opti.FindCurrent(_startedAt.UtcDateTime, DateTime.UtcNow)
-                        : entry.SourcePath;
+                    string? observedPath = source is null ? entry.SourcePath : FindCurrentLog(source);
                     var info = new FileInfo(observedPath ?? entry.SourcePath);
-                    bool current = source?.OptiLog is null || observedPath is not null;
+                    bool current = source is null || observedPath is not null;
                     observations.Add(new SessionLogManifest.Observation(entry.Id, current && info.Exists, current && info.Exists ? info.Length : 0));
                 }
                 catch
@@ -476,9 +490,7 @@ internal sealed class GameSessionLogCollector
     {
         try
         {
-            string? path = source.OptiLog is { } opti
-                ? opti.FindCurrent(_startedAt.UtcDateTime, DateTime.UtcNow)
-                : source.Path;
+            string? path = source.IsLog ? FindCurrentLog(source) : source.Path;
             if (path is null) return;
             var info = new FileInfo(path);
             if (!info.Exists)
@@ -487,7 +499,8 @@ internal sealed class GameSessionLogCollector
                 return;
             }
 
-            CopyWithRetry(info, Path.Combine(SessionDirectory, source.Name));
+            CopyWithRetry(info, Path.Combine(SessionDirectory, source.Name),
+                requiredAfterUtc: source.IsLog ? _startedAt.UtcDateTime : null);
             if (source.OptiLog is not null)
             {
                 lock (_writeGate)
@@ -500,27 +513,19 @@ internal sealed class GameSessionLogCollector
         }
     }
 
-    private static (long Written, bool Tail) CopyWithRetry(FileInfo source, string target, bool allowTail = true)
+    private string? FindCurrentLog(SnapshotSource source) => source.OptiLog is { } opti
+        ? opti.FindCurrent(_startedAt.UtcDateTime, DateTime.UtcNow)
+        : SessionArtifactFiles.IsCurrent(source.Path, _startedAt.UtcDateTime, DateTime.UtcNow) ? source.Path : null;
+
+    private static (long Written, bool Tail) CopyWithRetry(FileInfo source, string target,
+        DateTime? requiredAfterUtc = null)
     {
         Exception? last = null;
         for (int attempt = 0; attempt < 3; attempt++)
         {
             try
             {
-                using var input = new FileStream(
-                    source.FullName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-
-                long length = input.Length;
-                bool tail = allowTail && length > MaxCopyBytes;
-                if (tail)
-                {
-                    input.Seek(-MaxCopyBytes, SeekOrigin.End);
-                    SkipPartialLine(input);
-                }
-
-                using var output = new FileStream(target, FileMode.Create, FileAccess.Write, FileShare.Read);
-                input.CopyTo(output, 1 << 17);
-                return (tail ? MaxCopyBytes : length, tail);
+                return SessionArtifactFiles.CopySnapshot(source.FullName, target, MaxCopyBytes, requiredAfterUtc);
             }
             catch (Exception ex)
             {
@@ -533,66 +538,75 @@ internal sealed class GameSessionLogCollector
         throw last!;
     }
 
-    private static void SkipPartialLine(FileStream stream)
-    {
-        int b;
-        while ((b = stream.ReadByte()) >= 0 && b != '\n')
-        {
-            // 丢掉被切断的半行，让快照从整行开始
-        }
-    }
-
     /// <summary>
-    /// 保留本局由 OptiScaler/Streamline 产生的 minidump。Streamline 把 dump
-    /// 写到 ProgramData，而不是 OptiScaler 日志目录；只接收本局时间窗内、
-    /// 非空的最新少量文件，避免异常循环产生数百份大型 dump。
+    /// 本局 OptiScaler 根目录及 Streamline 事件目录的转储统一归档到 log/sessions。
+    /// 不递归进入备份/其他构建，不收旧转储；写入尚未关闭的文件留待下次重试。
     /// </summary>
-    private void CopyRecentOptiScalerDumps()
+    private void ArchiveRecentOptiScalerDumps()
     {
-        if (_optiScalerDumpDirectories.Count == 0 || _copiedOptiScalerDumps.Count >= MaxOptiScalerDumpsPerSession)
+        if (_copiedOptiScalerDumps.Count >= MaxOptiScalerDumpsPerSession)
         {
             return;
         }
 
         try
         {
-            DateTime startedUtc = _startedAt.UtcDateTime.AddSeconds(-2);
-            DateTime nowUtc = DateTime.UtcNow.AddSeconds(2);
+            DateTime startedUtc = _startedAt.UtcDateTime;
+            DateTime nowUtc = DateTime.UtcNow;
             var candidates = new List<FileInfo>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            void AddCandidate(string path)
+            {
+                try
+                {
+                    if (!seen.Add(Path.GetFullPath(path))) return;
+                    var info = new FileInfo(path);
+                    if ((info.Attributes & FileAttributes.ReparsePoint) != 0) return;
+                    if (info.Length > 0 && SessionArtifactFiles.IsCurrent(path, startedUtc, nowUtc))
+                        candidates.Add(info);
+                }
+                catch (Exception ex) { _logger.LogDebug(ex, "会话转储暂不可读：{Path}", path); }
+            }
+
+            // 构建加载目录是唯一受管来源；顶层匹配不扫描各版本或备份树。
+            IEnumerable<string> nativeDirectories = _optiScalerDirectories.Concat(_logs
+                .Where(s => s.OptiLog is not null)
+                .Select(s => Path.GetDirectoryName(s.OptiLog!.Path)!))
+                .Distinct(StringComparer.OrdinalIgnoreCase);
+            foreach (string directory in nativeDirectories)
+            {
+                try
+                {
+                    if (!Directory.Exists(directory)
+                        || (File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0) continue;
+                    foreach (string path in Directory.EnumerateFiles(directory, "OptiScaler_crash*.dmp", SearchOption.TopDirectoryOnly))
+                        AddCandidate(path);
+                }
+                catch (Exception ex) { _logger.LogDebug(ex, "会话转储目录暂不可读：{Path}", directory); }
+            }
 
             foreach (string root in _optiScalerDumpDirectories)
             {
-                if (!Directory.Exists(root))
+                if (!Directory.Exists(root) || (File.GetAttributes(root) & FileAttributes.ReparsePoint) != 0)
                 {
                     continue;
                 }
 
                 foreach (string eventDirectory in Directory.EnumerateDirectories(root))
                 {
+                    if ((File.GetAttributes(eventDirectory) & FileAttributes.ReparsePoint) != 0) continue;
                     foreach (string path in Directory.EnumerateFiles(eventDirectory, "*.dmp", SearchOption.TopDirectoryOnly))
-                    {
-                        try
-                        {
-                            var info = new FileInfo(path);
-                            if (info.Length > 0 && info.LastWriteTimeUtc >= startedUtc && info.LastWriteTimeUtc <= nowUtc)
-                            {
-                                candidates.Add(info);
-                            }
-                        }
-                        catch
-                        {
-                            // A dump may still be finalizing; the next snapshot can retry it.
-                        }
-                    }
+                        AddCandidate(path);
                 }
             }
 
             foreach (FileInfo source in candidates
                          .OrderByDescending(f => f.LastWriteTimeUtc)
-                         .ThenByDescending(f => f.FullName, StringComparer.OrdinalIgnoreCase)
-                         .Take(MaxOptiScalerDumpsPerSession))
+                         .ThenByDescending(f => f.FullName, StringComparer.OrdinalIgnoreCase))
             {
-                if (_copiedOptiScalerDumps.Contains(source.FullName))
+                string sourceIdentity = source.FullName + "|" + source.LastWriteTimeUtc.Ticks + "|" + source.Length;
+                if (_copiedOptiScalerDumps.Contains(sourceIdentity))
                 {
                     continue;
                 }
@@ -601,9 +615,14 @@ internal sealed class GameSessionLogCollector
                 string targetDirectory = Path.Combine(SessionDirectory, "opti-dumps");
                 Directory.CreateDirectory(targetDirectory);
                 string target = Path.Combine(targetDirectory, UniqueDumpName(targetDirectory, eventTag, source.Name));
-                // A minidump must remain a complete file; never apply the log tail limit.
-                CopyWithRetry(source, target, allowTail: false);
-                _copiedOptiScalerDumps.Add(source.FullName);
+                // 关闭写句柄后才移动；同卷不多存一份大文件，跨卷逐字节哈希核验后移除源。
+                try { SessionArtifactFiles.ArchiveCompletedDump(source.FullName, target); }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "本局转储暂未归档，后续快照重试：{Path}", source.FullName);
+                    continue;
+                }
+                _copiedOptiScalerDumps.Add(sourceIdentity);
 
                 lock (_writeGate)
                 {
@@ -620,7 +639,7 @@ internal sealed class GameSessionLogCollector
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "复制 OptiScaler minidump 失败：{Directory}", string.Join(";", _optiScalerDumpDirectories));
+            _logger.LogDebug(ex, "归档 OptiScaler minidump 失败：{Directory}", string.Join(";", _optiScalerDumpDirectories));
         }
     }
 
@@ -748,7 +767,7 @@ internal sealed class GameSessionLogCollector
                 return;
             }
 
-            target.Add(new SnapshotSource(UniqueName(target, name), full));
+            target.Add(new SnapshotSource(UniqueName(target, name), full, IsLog: ReferenceEquals(target, logs)));
         }
 
         void AddDirectory(List<string> target, string? directory)
@@ -1106,7 +1125,7 @@ internal sealed class GameSessionLogCollector
         }
     }
 
-    private sealed record SnapshotSource(string Name, string Path, OptiScalerSessionLogPath? OptiLog = null);
+    private sealed record SnapshotSource(string Name, string Path, OptiScalerSessionLogPath? OptiLog = null, bool IsLog = true);
 }
 
 // Pure path policy kept with the collector so the console regression can compile it without App/UI.
@@ -1155,8 +1174,7 @@ internal sealed record OptiScalerSessionLogPath(string Path, bool Multiple)
     {
         bool Current(string path)
         {
-            var info = new FileInfo(path);
-            return info.Exists && info.LastWriteTimeUtc >= startedUtc && info.LastWriteTimeUtc <= nowUtc;
+            return SessionArtifactFiles.IsCurrent(path, startedUtc, nowUtc);
         }
         if (!Multiple) return Current(Path) ? Path : null;
         string directory = System.IO.Path.GetDirectoryName(Path)!;

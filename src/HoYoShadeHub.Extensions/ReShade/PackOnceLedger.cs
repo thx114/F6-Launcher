@@ -191,6 +191,17 @@ public static class PackOnceLedger
             Write(Root, Data); // 失败时磁盘仍是 pending，下次不会自动重试。
         }
 
+        // 只供用户显式确认的声明式 INI 步骤恢复；不清空账本、不重跑 success、也不扩展 plan。
+        internal void ConfirmPendingIniRetry(string stableKey, PackActionStep step)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (!PackIniAction.IsIniAction(step) || Data.Plan is null || !Data.Plan.Contains(stableKey)
+                || !Data.States.TryGetValue(stableKey, out string? state) || state != "pending")
+                throw new InvalidOperationException("只有当前 plan 内已确认的 pending INI 步骤可以重试。");
+            Data.States.Remove(stableKey);
+            Write(Root, Data);
+        }
+
         /// <summary>测试和生产共用的副作用入口：先持久化 pending；异常/partial fail 永不自动重试。</summary>
         public async Task<(Reservation Reservation, string? Outcome)> ExecuteAsync(
             string stableKey, string legacyKey, Func<Task<string>> dispatch)
