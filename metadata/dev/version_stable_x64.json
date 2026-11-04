@@ -1,10 +1,10 @@
 {
-  "Version": "1.4.8",
+  "Version": "1.4.8.1",
   "Architecture": "X64",
-  "BuildTime": "2026-11-03T20:24:59.815010+00:00",
+  "BuildTime": "2026-11-04T06:39:04.007481+00:00",
   "DisableAutoUpdate": false,
-  "Portable": "https://github.com/thx114/F6-Launcher/releases/download/v1.4.8/F6Launcher_Portable_1.4.8_x64.zip",
-  "PortableSize": 195555793,
-  "PortableHash": "02770a266b45f8d3ea10c52d9bd74da272205143f5f5ff1aa8043dc30ba25410",
+  "Portable": "https://github.com/thx114/F6-Launcher/releases/download/v1.4.8.1/F6Launcher_Portable_1.4.8.1_x64.zip",
+  "PortableSize": 189718578,
+  "PortableHash": "2ca457b48729fad4facf14a963cedd8b92abf07d0f35126a153adbcc239a65d5",
   "SeparateFiles": null
 }
