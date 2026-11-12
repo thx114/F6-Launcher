@@ -28,9 +28,11 @@ public static partial class LauncherActionRunner
 
     /// <summary>只读前置条件每次重查；不能被 once success 跳过，也不能晚于同包其他动作。</summary>
     private static async Task<PackActionOncePolicy.ExecutionResult?> CheckLauncherRequirementsAsync(
-        IEnumerable<PackAutoAction> actions, LauncherActionContext context)
+        IEnumerable<PackAutoAction> actions, LauncherActionContext context,
+        Func<PackAutoAction, int, bool>? isStepEnabled = null)
     {
-        foreach (PackActionStep step in actions.SelectMany(action => action.Steps).Where(IsLauncherVersionRequirement))
+        foreach (PackActionStep step in actions.SelectMany(action => action.Steps
+            .Where((_, index) => isStepEnabled?.Invoke(action, index) ?? true)).Where(IsLauncherVersionRequirement))
         {
             string result = CheckLauncherVersion(step);
             if (PackActionOncePolicy.IsSuccessfulOutcome(result)) continue;

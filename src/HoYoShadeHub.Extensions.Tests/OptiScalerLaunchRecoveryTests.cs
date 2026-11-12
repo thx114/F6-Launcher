@@ -295,6 +295,13 @@ internal static class OptiScalerLaunchRecoveryTests
             AppConfig.Values[OptiScalerPresets.PresetKey(OtherGame, "official/previous-owner")] = "requested";
             result = OptiScalerPresets.SyncIntoProfileForLaunchChecked(previous.Root, OtherGame);
             check(result.Succeeded && result.PresetName == "requested"
+                && File.ReadAllText(previous.Profile(OtherGame)) == requestedPreset,
+                "launch preparation preserves requested game profile after previous owner recovery");
+            // Preparation preserves existing profiles; the launch pipeline activates
+            // the requested game afterwards, rather than replaying a named preset.
+            check(OptiScalerProfiles.Activate(previous.Root, OtherGame),
+                "launch activation accepts the prepared requested game profile");
+            check(result.Succeeded && result.PresetName == "requested"
                 && OptiScalerProfiles.RuntimeOwner(previous.Root) == OtherGame
                 && File.ReadAllText(previous.Main) == requestedPreset,
                 "requested game applies its own preset after previous owner recovery");

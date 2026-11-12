@@ -32,6 +32,12 @@ namespace HoYoShadeHub.Features.GameLauncher;
 /// </summary>
 public static class GameLaunchPipeline
 {
+    private static readonly FpsUnlockSessionRegistry FpsSessions = new();
+
+    internal static bool HasActiveFpsSessions => FpsSessions.HasActiveSessions;
+
+    internal static Task WaitForFpsSessionsAsync() => FpsSessions.DrainAsync();
+
     /// <summary>日志类别占位（静态类不能做泛型参数）</summary>
     private sealed class PipelineLogToken { }
 
@@ -83,6 +89,10 @@ public static class GameLaunchPipeline
             return null;
         }
 
+        var service = AppConfig.GetService<GameLauncherService>();
+        string targetName = entry?.ProcessName ?? await service.GetGameExeNameAsync(gameId);
+        targetName = ShadeBlacklistBypass.RemapInjectProcessName(entry, targetName);
+        GameLaunchGuard.EnsureCanStart(targetName);
         if (AppConfig.GetUseOptiScalerLaunchOption(gameId)) GameNrRuntimeService.PrepareOpti(gameId);
         report?.Invoke("准备启动 " + gameId.GameBiz);
 
@@ -117,7 +127,6 @@ public static class GameLaunchPipeline
             useOpenHoYoShade = false;
         }
 
-        var service = AppConfig.GetService<GameLauncherService>();
         bool useXxmi = AppConfig.GetUseXxmiInjectLaunchOption(gameId);
         bool manualXxmi = AppConfig.GetXxmiLaunchMode(gameId) == XxmiLaunchMode.Manual;
         string? xxmiTarget = null;
@@ -156,8 +165,7 @@ public static class GameLaunchPipeline
             if (string.IsNullOrWhiteSpace(xxmiTarget) || !File.Exists(xxmiTarget))
             { report?.Invoke("XXMI 官方模式：找不到游戏主程序"); return null; }
             // Prepare selected Opt runtime paths/autoload before official game creation.
-            if (await service.GetGameProcessAsync(gameId) is { } existing)
-                throw new InvalidOperationException($"Game is running: {existing.ProcessName}.exe ({existing.Id}).");
+            GameLaunchGuard.EnsureCanStart(xxmiTarget);
             reservation.Validate(gameId.GameBiz.ToString(), ct);
             var launch = XxmiInjector.LaunchOfficialBaseline(gameId, entry?.DisplayName, xxmiTarget);
             report?.Invoke(launch.Message);
@@ -329,10 +337,20 @@ public static class GameLaunchPipeline
             }
         }
 
-        // ⑤ 帧率解锁（fire-and-forget：等游戏稳了再 patch，CLI 不需要等它）
+        // CLI must observe attach readiness, then retain the owner through game exit.
+        // Waiting for lifetime happens after the entire batch, otherwise a following stop step cannot run.
         if (AppConfig.GetUseFpsUnlockLaunchOption(gameId))
         {
-            _ = Task.Run(() => FpsUnlockAsync(gameId, service, process, ct));
+            string identity = $"{process.Id}:{process.StartTime.ToUniversalTime().Ticks}";
+            FpsUnlockSessionRegistry.Session session = FpsSessions.GetOrStart(identity,
+                owner => FpsUnlockAsync(gameId, service, process, owner, ct));
+            if (blockForInjection)
+            {
+                FpsUnlockSessionRegistry.AttachResult attached = await session.Ready.ConfigureAwait(false);
+                report?.Invoke($"帧率解锁 pid {process.Id}: {(attached.Armed ? "armed" : "failed")} — {attached.Detail}");
+                if (!attached.Armed)
+                    throw new InvalidOperationException($"游戏已启动（PID {process.Id}），但帧率解锁未建立：{attached.Detail}");
+            }
         }
 
         return process;
@@ -380,16 +398,16 @@ public static class GameLaunchPipeline
                 return true;
             }
 
-            HashSet<string> disabled = PackActionConsent.DisabledActions(gameId.GameBiz.Value, consentHash);
+            PackStepSelection selection = PackActionConsent.Selection(gameId.GameBiz.Value, consentHash);
             List<PackAutoAction> actions = [.. snapshot.LoadActions()
-                .Where(a => a.RunOnLaunch && !disabled.Contains(a.Name))];
+                .Where(a => a.RunOnLaunch && selection.HasEnabledSteps(a))];
             if (actions.Count == 0)
             {
                 return true;
             }
 
             ShadeHost? host = PluginHostLocator.Resolve(out _);
-            GameLaunchIniPreparation.EnsurePackActionTarget(entry, host, actions);
+            GameLaunchIniPreparation.EnsurePackActionTarget(entry, host, actions, selection.IsEnabled);
             GamePluginService? plugins = null;
             if (entry is not null)
             {
@@ -984,7 +1002,8 @@ public static class GameLaunchPipeline
 
     // ==================== ⑤ 帧率解锁（页面 StartFpsUnlockAsync 的移植）====================
 
-    private static async Task FpsUnlockAsync(GameId gameId, GameLauncherService service, Process game, CancellationToken ct)
+    private static async Task FpsUnlockAsync(GameId gameId, GameLauncherService service, Process game,
+        FpsUnlockSessionRegistry.Session session, CancellationToken ct)
     {
         try
         {
@@ -1004,7 +1023,9 @@ public static class GameLaunchPipeline
                 AppConfig.SetFpsUnlockLastCheckTicks(gameId, DateTime.UtcNow.Ticks);
                 try
                 {
-                    var result = await FpsUnlockDataService.UpdateAsync(ct);
+                    using var syncTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    syncTimeout.CancelAfter(TimeSpan.FromSeconds(20));
+                    var result = await FpsUnlockDataService.UpdateAsync(syncTimeout.Token);
                     if (result is FpsUnlockDataService.UpdateResult.Updated or FpsUnlockDataService.UpdateResult.Unchanged)
                     {
                         AppConfig.SetFpsUnlockDataVersion(gameId, versionText);
@@ -1042,6 +1063,7 @@ public static class GameLaunchPipeline
             if (game.HasExited)
             {
                 _logger.LogWarning("FPS unlock: game process not found, skipped");
+                session.ReportAttached(false, "游戏进程已退出。");
                 return;
             }
 
@@ -1051,10 +1073,16 @@ public static class GameLaunchPipeline
             {
                 _logger.LogInformation("FPS unlock armed: {Target} fps (pid {Pid})",
                     AppConfig.GetFpsUnlockTarget(gameId), game.Id);
+                session.ReportAttached(true, $"目标 {AppConfig.GetFpsUnlockTarget(gameId)} fps；宿主保留到该游戏进程退出。");
+                // Cancellation of the launch no longer owns a running remote reader.
+                // Wait on this exact Process handle, never a later process with the same name/PID.
+                await game.WaitForExitAsync().ConfigureAwait(false);
+                _logger.LogInformation("FPS unlock session ended: target exited (pid {Pid})", game.Id);
             }
             else
             {
                 _logger.LogWarning("FPS unlock failed: {Detail}", unlocker.LastError);
+                session.ReportAttached(false, unlocker.LastError ?? "附加失败，未建立帧率解锁会话。");
                 if (unlocker.PatternNotFound)
                 {
                     // 特征对不上 = 数据滞后于游戏版本；清戳，下次启动重新拉上游
@@ -1064,10 +1092,13 @@ public static class GameLaunchPipeline
         }
         catch (OperationCanceledException)
         {
+            session.ReportAttached(false, "附加前操作已取消。");
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "FPS unlock");
+            session.ReportAttached(false, ex.Message);
+            throw;
         }
     }
 

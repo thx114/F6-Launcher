@@ -37,7 +37,8 @@ public static class PackActionOncePolicy
     /// <summary>生产与回归共用的包门：锁前后检查同一授权快照，随后只登记该快照的完整 plan。</summary>
     public static async Task<ExecutionResult> RunSnapshotAsync(PackAutoAction action, PackAutoActionSnapshot snapshot,
         string packRoot, Func<bool> isCurrent, Func<PackActionStep, Task<string>> dispatch, Action<string>? report = null,
-        Func<string, byte[]>? readBytes = null, Func<PackActionStep, Task<bool>>? confirmPendingIniRetry = null)
+        Func<string, byte[]>? readBytes = null, Func<PackActionStep, Task<bool>>? confirmPendingIniRetry = null,
+        Func<PackAutoAction, int, bool>? isStepEnabled = null)
     {
         bool Current() => isCurrent() && snapshot.IsCurrent(packRoot, readBytes);
         try
@@ -49,7 +50,7 @@ public static class PackActionOncePolicy
             var plan = ledger.RegisterPlan(PlanKeys(snapshot.LoadActions()));
             if (plan == PackOnceLedger.PlanRegistration.NeedsMigration && ledger.HasPlan)
                 return Block("✗ 包出现未获权逻辑身份；普通 hash 同意不扩 plan，需显式迁移，批次已阻断。", BlockReason.NeedsMigration);
-            return await RunStepsAsync(captured, true, ledger, dispatch, Current, report, confirmPendingIniRetry);
+            return await RunStepsAsync(captured, true, ledger, dispatch, Current, report, confirmPendingIniRetry, isStepEnabled);
         }
         catch (Exception ex)
         {
@@ -60,7 +61,8 @@ public static class PackActionOncePolicy
     /// <summary>生产与回归共用的步骤链：success skip 可继续；一旦 blocked，后续副作用为零。</summary>
     public static async Task<ExecutionResult> RunStepsAsync(PackAutoAction action, bool fromPack,
         PackOnceLedger.Session? ledger, Func<PackActionStep, Task<string>> dispatch,
-        Func<bool> isCurrent, Action<string>? report = null, Func<PackActionStep, Task<bool>>? confirmPendingIniRetry = null)
+        Func<bool> isCurrent, Action<string>? report = null, Func<PackActionStep, Task<bool>>? confirmPendingIniRetry = null,
+        Func<PackAutoAction, int, bool>? isStepEnabled = null)
     {
         var outcomes = new List<string>();
         ExecutionResult Stop(string note, BlockReason reason)
@@ -73,6 +75,13 @@ public static class PackActionOncePolicy
         {
             if (!isCurrent()) return Stop("✗ 上下文已变化；动作和后续批次已阻断。", BlockReason.ContextChanged);
             PackActionStep step = action.Steps[index];
+            if (isStepEnabled is not null && !isStepEnabled(action, index))
+            {
+                string skipped = $"{step.Action}：未勾选，跳过";
+                outcomes.Add(skipped);
+                report?.Invoke($"[{action.Name}] {skipped}");
+                continue; // No reservation or success entry for a declined step; indices remain unchanged.
+            }
             try
             {
                 string outcome;

@@ -58,8 +58,8 @@ internal static class GenshinEarlyLaunch
         var pi = new ProcessInformation();
         var commandLine = new StringBuilder('"' + exePath + '"' + (string.IsNullOrWhiteSpace(arguments) ? string.Empty : " " + arguments));
 
-        if (!CreateProcess(exePath, commandLine, IntPtr.Zero, IntPtr.Zero, false, 0,
-                IntPtr.Zero, workingDirectory, ref si, out pi))
+        if (!GameLaunchGuard.Start(exePath, () => CreateProcess(exePath, commandLine, IntPtr.Zero, IntPtr.Zero, false, 0,
+            IntPtr.Zero, workingDirectory, ref si, out pi)))
         {
             return new(null, $"CreateProcess 失败：{new Win32Exception(Marshal.GetLastWin32Error()).Message}");
         }

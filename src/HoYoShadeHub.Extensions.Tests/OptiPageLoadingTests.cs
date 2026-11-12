@@ -49,13 +49,20 @@ internal static class OptiPageLoadingTests
             if (repo is null) throw new DirectoryNotFoundException("Run from the repository for page source contracts.");
             string page = File.ReadAllText(Path.Combine(repo, "src", "HoYoShadeHub", "Features", "OptiScaler", "OptiScalerPage.xaml.cs"));
             string delay = page[page.IndexOf("private void UpdateOptiInjectDelayUi()")..page.IndexOf("private void NumberBox_OptiInjectDelay_ValueChanged")];
-            string attach = page[page.IndexOf("private void AttachPreset(")..page.IndexOf("private void OnPresetChanged(")];
-            string change = page[page.IndexOf("private void OnPresetChanged(")..page.IndexOf("#region 注入用的 DLL 名字")];
+            int attachStart = page.IndexOf("private void AttachPreset(", StringComparison.Ordinal);
+            int attachEnd = page.IndexOf("#region 卡片扩展配置", attachStart, StringComparison.Ordinal);
+            if (attachEnd < 0) throw new InvalidOperationException("Preset attachment source boundary missing.");
+            string attach = page[attachStart..attachEnd];
+            int changeStart = page.IndexOf("private async void OnPresetChanged(", StringComparison.Ordinal);
+            if (changeStart < 0) throw new InvalidOperationException("Preset handler source boundary missing.");
+            int changeEnd = page.IndexOf("#region 注入用的 DLL 名字", changeStart, StringComparison.Ordinal);
+            if (changeEnd < 0) throw new InvalidOperationException("Preset handler source boundary missing.");
+            string change = page[changeStart..changeEnd];
             Check(delay.Contains("bool wasLoading = _loading;") && delay.Contains("_loading = wasLoading;"),
                 "nested control initialization retains outer event suppression (source contract)");
-            Check(attach.Contains("_loading = true;") && attach.Contains("finally { _loading = wasLoading; }"),
+            Check(attach.Contains("item.PresetChanged = null;") && attach.Contains("finally { item.PresetChanged = OnPresetChanged; }"),
                 "preset attachment suppresses callbacks and restores prior state (source contract)");
-            Check(!change.Contains("Load();") && change.Contains("AttachPreset(item);"),
+            Check(!change.Contains("Load();") && change.Contains("AttachPreset(item, result.Preset);"),
                 "profile conflict cannot recursively load the page (source contract)");
             Check(page.Contains("await Task.Run(") && page.Contains("if (!operation.IsCurrent")
                 && page.Contains("_loadOperation.Cancel();"),

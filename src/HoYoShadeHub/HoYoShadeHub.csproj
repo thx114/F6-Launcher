@@ -116,4 +116,16 @@
 	<ItemGroup>
 		<Content Include="Assets\f6-logo.png;Assets\f6-logo.ico" CopyToOutputDirectory="Always" CopyToPublishDirectory="Always" />
 	</ItemGroup>
+
+	<PropertyGroup>
+		<NativeInjectorOutput>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)\$(BaseIntermediateOutputPath)native-injector\$(Platform)'))</NativeInjectorOutput>
+	</PropertyGroup>
+	<Target Name="BuildF6ShadeInjector" BeforeTargets="AssignTargetPaths" Condition="'$(DesignTimeBuild)' != 'true'">
+		<Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\..\..\native\HoYoShadeInjector\build.ps1&quot; -Output &quot;$(NativeInjectorOutput)&quot; -Architecture $(Platform)" />
+	</Target>
+	<ItemGroup>
+		<Content Include="$(NativeInjectorOutput)\F6ShadeInjector.exe" Link="F6ShadeInjector.exe" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+		<Content Include="..\..\native\HoYoShadeInjector\LICENSE" Link="F6ShadeInjector.LICENSE" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+		<Content Include="..\..\native\HoYoShadeInjector\ReShade_LICENSE" Link="F6ShadeInjector.ReShade_LICENSE" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+	</ItemGroup>
 </Project>

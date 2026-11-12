@@ -740,12 +740,15 @@ public sealed class GithubReleaseResolver
 
         // 某个 tag 的资产清单不会变，缓存一天  选版本 / 安装时别反复打 GitHub（用户要求）
         string key = $"assets|{repo}|{tag}";
+        cancellationToken.ThrowIfCancellationRequested();
         if (ReadCache<List<string>>(key, forceRefresh) is { } cached)
         {
             return cached;
         }
 
-        List<string> names = await GetAssetNamesFromHtmlCoreAsync(repository, tag, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        List<string> names = await GetAssetNamesFromHtmlCoreAsync(repo, tag, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
         if (names.Count > 0)
         {
             WriteCache(key, names);
@@ -785,6 +788,7 @@ public sealed class GithubReleaseResolver
                 }
             }
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch
         {
             // 拿不到就让调用方退回 API

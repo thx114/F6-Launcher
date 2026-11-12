@@ -12,7 +12,7 @@ namespace HoYoShadeHub.Features.Plugins;
 ///
 /// <para>
 /// auto.json 内容变了（SHA-256 变）→ 视为「新包 / 包更新了」，需要重新弹窗确认。
-/// 同意时记下 hash + 用户**没勾选**的动作名（默认全选 = 全装）；启动前自动执行（runOnLaunch）
+/// 同意时记下 hash + 用户没勾选的原始步骤；启动前自动执行（runOnLaunch）
 /// 和插件页的动作按钮都只跑仍然启用的动作。用户点「全部不要」= 同意 hash 但全部禁用
 /// （不再反复弹窗，直到包内容再变）。
 /// </para>
@@ -59,19 +59,27 @@ public static class PackActionConsent
         => hash.Length > 0
            && Read(gameBiz) is { } record && string.Equals(record.Hash, hash, StringComparison.Ordinal);
 
-    /// <summary>这个 hash 下被用户禁用的动作名（hash 对不上 = 还没问过 → 空集）</summary>
+    /// <summary>兼容旧调用：同意记录必须有效，返回整组禁用的动作名。</summary>
     public static HashSet<string> DisabledActions(string gameBiz, string hash)
+        => Selection(gameBiz, hash).DisabledActions;
+
+    public static PackStepSelection Selection(string gameBiz, string hash)
+        => TrySelection(gameBiz, hash)
+            ?? throw new InvalidDataException("覆盖包同意记录缺失或损坏；拒绝执行。");
+
+    public static PackStepSelection? TrySelection(string gameBiz, string hash)
     {
         PackConsentRecord? record = Read(gameBiz);
-        if (record is null || record.Hash != hash)
-            throw new InvalidDataException("覆盖包同意记录缺失或损坏；拒绝执行。");
-        return record.Disabled;
+        return record is not null && record.Hash == hash ? record.Selection : null;
     }
 
     /// <summary>记住这次同意：hash + 没勾选的动作名（disabled 为空 = 全装）</summary>
     public static void Save(string gameBiz, string hash, IEnumerable<string> disabledNames)
+        => Save(gameBiz, hash, new PackStepSelection(new(disabledNames, StringComparer.Ordinal), new(StringComparer.Ordinal)));
+
+    public static void Save(string gameBiz, string hash, PackStepSelection selection)
     {
-        string raw = PackConsentRecord.Serialize(hash, disabledNames);
+        string raw = PackConsentRecord.Serialize(hash, selection.DisabledActions, selection.DisabledSteps);
         if (!AppConfig.TrySetValue(RecordKey(gameBiz), raw))
             throw new IOException("覆盖包同意记录未持久化；拒绝执行。");
     }
@@ -101,7 +109,7 @@ public static class PackActionDescriber
 {
     public static bool IsHighRisk(PackActionStep step) => step.Action.Trim().ToLowerInvariant() switch
     {
-        "override_files" or "add_game_from_registry" or "clear_game_ini" or "delete_shader" => true,
+        "copy_file" or "place_file" or "override_files" or "add_game_from_registry" or "clear_game_ini" or "delete_shader" => true,
         _ => false,
     };
 
@@ -134,6 +142,7 @@ public static class PackActionDescriber
             "set_cmd_launch" => (enabled is true ? "开启" : "关闭") + " CMD 启动游戏（全局）",
             "set_cmd_args" => $"修改游戏命令行（{(step.GetString("mode") ?? "replace")}）",
             "set_launch_option" => $"启动选项 {step.GetString("key")} = {(enabled is true ? "开" : "关")}",
+            "reset_launch_options" => "清空当前游戏的附加启动项（含 XXMI、Rocket、Starward、Blender）和模块选择",
             "set_opt" or "set_optiscaler" => (enabled is true ? "启用" : "关闭") + " OptiScaler",
             "set_module" => string.IsNullOrWhiteSpace(step.GetString("id"))
                 ? (enabled is true ? "启用" : "关闭") + "模块注入"
@@ -158,6 +167,9 @@ public static class PackActionDescriber
                 "launcher" => "覆盖启动器目录文件",
                 _ => "覆盖游戏目录文件",
             } + $"（{OverlayFileCount(packRoot, target)} 个文件）",
+            "copy_file" or "place_file" => $"放置文件：{step.GetString("file") ?? "（缺 file）"} → "
+                + $"{step.GetString("directory") ?? "（缺 directory）"}"
+                + (step.GetString("name") is { } fileName ? $" / {fileName}" : string.Empty),
             "import_shader" => $"导入 ReShade 滤镜 {name}",
             "set_shader" => $"{(enabled is true ? "开启" : "关闭")} technique {name}",
             "delete_shader" => $"删除 ReShade 滤镜 {name}",
@@ -192,6 +204,20 @@ public static class PackActionDescriber
 
         switch (action)
         {
+            case "copy_file":
+            case "place_file":
+                details.Add("来源：包内 " + (step.GetString("file") ?? "（缺 file）"));
+                string directory = step.GetString("directory") ?? "（缺 directory）";
+                string fileName = step.GetString("name") ?? Path.GetFileName(step.GetString("file") ?? string.Empty);
+                string rootLabel = Path.IsPathFullyQualified(directory) ? string.Empty : (step.GetString("target") ?? "game").Trim().ToLowerInvariant() switch
+                {
+                    "launcher" => "启动器数据目录 / ", "shade" => "HoYoShade 目录 / ", _ => "当前游戏目录 / ",
+                };
+                // Display declarations as text; malformed package paths are rejected by the executor.
+                details.Add("目标：" + rootLabel + directory.TrimEnd('\\', '/') + "\\" + fileName);
+                details.Add(step.GetBool("overwrite") == false ? "目标存在时停止，不覆盖。" : "允许覆盖同名文件；原文件备份到包内 .file-backups。");
+                if (step.GetString("sha256") is { } sha256) details.Add("文件 SHA256：" + sha256);
+                break;
             case "override_files":
             {
                 string target = (step.GetString("target") ?? "game").Trim().ToLowerInvariant();

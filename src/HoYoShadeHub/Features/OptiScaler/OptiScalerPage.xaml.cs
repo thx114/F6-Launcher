@@ -601,26 +601,7 @@ public sealed partial class OptiScalerPage : PageBase
 
     // Version discovery belongs to Load's background snapshot. Opening a picker only binds memory.
     private void FillNrPicker(ComboBox combo)
-    {
-        combo.Tag = true;
-        try
-        {
-            combo.Items.Clear();
-            combo.Items.Add(new ComboBoxItem { Content = "NR：默认" });
-            foreach (string version in _nrVersions)
-                combo.Items.Add(new ComboBoxItem { Content = "NR：" + version, Tag = version });
-            int index = _selectedNrVersion is null ? 0
-                : _nrVersions.FindIndex(v => string.Equals(v, _selectedNrVersion, StringComparison.OrdinalIgnoreCase)) + 1;
-            if (_selectedNrVersion is not null && index == 0)
-            {
-                combo.Items.Add(new ComboBoxItem { Content = "NR：" + _selectedNrVersion + "（不可选）",
-                    Tag = _selectedNrVersion, IsEnabled = false });
-                index = combo.Items.Count - 1;
-            }
-            combo.SelectedIndex = index;
-        }
-        finally { combo.Tag = false; }
-    }
+        => NrVersionPicker.SetVersions(combo, _selectedNrVersion, _nrVersions);
 
     private void ComboBox_Nr_Loaded(object sender, RoutedEventArgs e)
     {
@@ -638,9 +619,13 @@ public sealed partial class OptiScalerPage : PageBase
         if (string.Equals(version, _selectedNrVersion, StringComparison.OrdinalIgnoreCase)) return;
         long generation = PageGeneration;
         string buildId = item.CurrentBuildId;
-        item.IsBusy = true;
+        bool ownsBusy = false;
         try
         {
+            await NrVersionPicker.CloseForSelectionAsync(combo, PageCancellationToken);
+            if (!IsCurrentItem(item, game, generation) || item.IsBusy) return;
+            item.IsBusy = true;
+            ownsBusy = true;
             await RunIoAsync(() =>
             {
                 if (version is not null || Directory.Exists(NrRuntimeLibrary.OptiDirectory(AppConfig.CacheRoot, game.GameBiz.Value, buildId)))
@@ -662,8 +647,11 @@ public sealed partial class OptiScalerPage : PageBase
         }
         finally
         {
-            if (IsCurrentItem(item, game, generation)) FillNrPicker(combo);
-            item.IsBusy = false;
+            if (ownsBusy)
+            {
+                if (IsCurrentItem(item, game, generation)) FillNrPicker(combo);
+                item.IsBusy = false;
+            }
         }
     }
 

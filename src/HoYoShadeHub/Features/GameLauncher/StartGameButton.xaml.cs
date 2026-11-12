@@ -43,6 +43,12 @@ public sealed partial class StartGameButton : UserControl
 
     public string? RunningGameInfo { get; set => SetProperty(ref field, value); }
 
+    public bool IsGameProcessUnverified
+    {
+        get;
+        set { if (SetProperty(ref field, value)) OnPropertyChanged(nameof(StartGameButtonText)); }
+    }
+
 
     public bool EnableGameLaunch { get; set { if (SetProperty(ref field, value)) UpdateActionButtonState(); } }
 
@@ -108,7 +114,7 @@ public sealed partial class StartGameButton : UserControl
                 : IsWaitProcessOnlyMode
                     ? "启动（只等进程注入）"
                     : IsShaderOnlyLaunchMode ? Lang.LauncherPage_StartMod : Lang.LauncherPage_StartGame,
-        GameState.GameIsRunning => Lang.LauncherPage_GameIsRunning,
+        GameState.GameIsRunning => IsGameProcessUnverified ? "游戏进程状态待确认" : Lang.LauncherPage_GameIsRunning,
         GameState.InstallGame => Lang.InstallGameDialog_LocateGame,
         GameState.UpdateGame => Lang.LauncherPage_UpdateGame,
         GameState.UpdatePlugin => "Update Plugins",

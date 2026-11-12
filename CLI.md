@@ -1,6 +1,6 @@
 # HoYoShadeHub 命令行
 
-用**根目录的 `HoYoShadeHub.exe`**（便携启动壳）即可：它会自动把命令转给最新 `app-*` 目录里的真身，**等命令跑完并回传退出码**，子进程输出直接显示在你的控制台里。也可以直接调 `app-*\HoYoShadeHub.exe`。
+新包使用**根目录的 `F6Launcher.exe`**（便携启动壳），已有安装也兼容旧的 `HoYoShadeHub.exe`。启动壳读取 `version.ini` 选择实际程序，**等命令跑完并回传退出码**。也可直接调用指定 `app-*` 内的程序以绑定候选构建，不能把另一个已运行的 GUI 当作该 CLI 的宿主。
 
 `run` 走完整插件注入管线（等同启动页启动，勾选什么注什么），无弹窗、无同意流程（命令行本身就是授权）。退出码：0 全成功，1 有步骤失败 / 参数不对。
 
@@ -59,13 +59,24 @@ JSON 三种形态等价：`{"steps":[...]}` / `{"actions":[...]}` / 裸数组 `[
 | `test_game` | 一步完成启动 → 等待 → 关闭；等待参数同 `wait`，默认 60 秒 |
 | `set_dx12` | 切换 DX12（参数 `enabled`） |
 | `set_smooth_motion` | AI 插帧开关 |
-| `set_launch_option` | 启动项（`key` = `plugin`/`module`/`opt`/`fps_target`/`start_argument`/`use_popup_window`… + `enabled`） |
+| `set_launch_option` | 启动项开关（`key` = `useHoYoShade` / `useOpenHoYoShade` / `useXxmiInject` / `useModules` / `useOptiScaler` / `useFpsUnlock`，另传 `enabled`）；帧率目标使用 `set_game_setting` 的 `fps_target` |
+| `reset_launch_options` | 清空当前游戏的附加启动项及模块选择，包括 XXMI、Rocket、Starward、Blender；保留游戏本体启动，不改其他游戏或全局模块开关。配合后续 `set_opt_build` / `set_module` 选择所需组件。需要支持此动作的 1.4.8.2 构建。 |
 | `set_opt` / `set_module` / `set_addon` | OptiScaler / 模块 / 插件开关 |
 | `import_preset` / `apply_preset` | 预设导入 / 应用 |
 | `switch_dll` | DLL 版本切换 |
 | `set_opt_nr` / `set_optiscaler_nr` | 当前游戏的 OptiScaler 独立 NR；`version` 指定名称，`default:true` 恢复构建默认；`file` + `sha256` 校验并导入包内 x64 DLL，`download:false` 禁止缺失版本下载 |
 | `require_launcher_version` / `request_launcher_version` | `minVersion` 指定最低启动器版本（兼容 `version`）；不足时提示更新并阻止后续动作。属于每次重查的前置条件，不被 once 成功记录跳过；1.4.7.1 起支持 |
 | `set_inject_mode` / `set_inject_delay` / `set_cmd_launch` / `set_cmd_args` / `set_game_setting` | 其余启动设置 |
+
+## 帧率解锁的 CLI 会话寿命
+
+开启当前游戏的 `useFpsUnlock` 后，`launch_game` 等待帧率附加结果，再返回后续批次步骤。附加成功会打印 `armed` 及目标 PID；失败会打印原因并让命令最终返回失败，已经启动的游戏不会因此被关闭。
+
+完成全部步骤后，CLI 会继续保持 FPS 会话，直到**本次实际游戏进程**退出，防止游戏回读的目标帧率内存随 CLI 提前消失。例如 `launch_game` 后接 `wait 70`，仍会先执行该等待，之后保持宿主到游戏退出；另开进程等待不能代替此所有者。后续显式的 `stop_game` 动作仍按批次顺序执行。本行为也适用于不含 `wait` 的单独 `launch_game`。
+
+正常退出和 Ctrl+C 会保护仍活动的 FPS 会话及待退休资源。强制结束进程、关闭控制台或系统终止仍可能使宿主消失，不能将这些情况描述为安全停用协议。旧 shellcode 不会在循环中重新检查头部 PID，清零 PID 不代表远程线程已退出；无法证明远端代码不再被访问时，候选会保留资源至目标进程退出。
+
+`armed` 只表示附加成功，不是实测帧率或长期稳定性结论。本轮候选只通过隔离验证；此前 `armed` 后崩溃与释放风险有时序/地址偏移上的关联，但没有足够转储证据确认因果。
 
 ## 其它动词
 

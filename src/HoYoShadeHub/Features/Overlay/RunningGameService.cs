@@ -1,4 +1,5 @@
 using HoYoShadeHub.Core;
+using HoYoShadeHub.Extensions.Games;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -71,12 +72,13 @@ internal static class RunningGameService
 
     private static void CheckGameExit(object? sender, ElapsedEventArgs e)
     {
+        using var current = Process.GetCurrentProcess();
         lock (_runningGameLock)
         {
             for (int i = 0; i < _runningGames.Count; i++)
             {
                 RunningGame runningGame = _runningGames[i];
-                if (runningGame.Process.HasExited)
+                if (!GameProcessDiscovery.IsRunning(runningGame.Process, current.SessionId))
                 {
                     User32.UnhookWinEvent(runningGame.WinEventHook);
                     _runningGames.RemoveAt(i);

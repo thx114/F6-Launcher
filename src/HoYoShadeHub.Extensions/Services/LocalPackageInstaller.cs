@@ -330,12 +330,12 @@ public sealed class LocalPackageInstaller
 
         cancellationToken.ThrowIfCancellationRequested();
 
-        progress?.Report(new(0, "正在识别安装包…"));
+        progress?.Report(new(null, "正在识别安装包…"));
         LocalPackageKind kind = kindOverride ?? DetectKind(file);
 
         LocalPackageInstallResult result = kind switch
         {
-            LocalPackageKind.Addon => await InstallAddonAsync(file, cancellationToken),
+            LocalPackageKind.Addon => await InstallAddonAsync(file, cancellationToken, progress),
             LocalPackageKind.OptiScaler => await InstallOptiScalerAsync(file, cancellationToken),
             LocalPackageKind.Module => InstallModule(file, cancellationToken),
             LocalPackageKind.Overlay => await InstallOverlayAsync(file, cancellationToken, progress),
@@ -344,12 +344,26 @@ public sealed class LocalPackageInstaller
                 + "把它解压覆盖到启动器目录，或者用「检查更新」。"),
             _ => throw new NotSupportedException("标准 hysx 扩展包请走扩展安装器。"),
         };
-        if (!string.IsNullOrWhiteSpace(_cacheRoot))
+        // Addon imports cannot change NR: do not rehash every managed NR library.
+        if (kind != LocalPackageKind.Addon && !string.IsNullOrWhiteSpace(_cacheRoot))
         {
-            var errors = NrRuntimeLibrary.Consolidate(_cacheRoot, _addonsDirectory, _optiscalerRoot, _cacheRoot);
+            // A standalone build/module cannot change other installed builds or per-game runtimes.
+            string?[] roots = kind is LocalPackageKind.OptiScaler or LocalPackageKind.Module
+                ? [result.TargetPath] : [_addonsDirectory, _optiscalerRoot, _cacheRoot];
+            progress?.Report(new(90, "正在整理本次安装的 NR 硬链接…"));
+            var nrProgress = new InlineProgress<NrRuntimeLibrary.ConsolidationProgress>(p =>
+                progress?.Report(new(90,
+                    $"正在整理 NR 硬链接（{p.Completed}/{p.Total}）：{Path.GetFileName(Path.GetDirectoryName(p.File))}")));
+            var errors = NrRuntimeLibrary.ConsolidateScoped(_cacheRoot, roots, nrProgress, cancellationToken);
             if (errors.Count > 0) throw new IOException("NR 硬链接整理未完成：" + string.Join(Environment.NewLine, errors));
         }
+        progress?.Report(new(90, "文件安装完成，准备刷新界面…"));
         return result;
+    }
+
+    private sealed class InlineProgress<T>(Action<T> report) : IProgress<T>
+    {
+        public void Report(T value) => report(value);
     }
 
     // ───────────────────────── addon / 插件 ─────────────────────────
@@ -357,7 +371,8 @@ public sealed class LocalPackageInstaller
     /// <summary>
     /// 安装插件：裸 addon 直接复制；zip 解压后把里面所有 addon 文件收进 Addons 目录。
     /// </summary>
-    private async Task<LocalPackageInstallResult> InstallAddonAsync(string file, CancellationToken cancellationToken)
+    private async Task<LocalPackageInstallResult> InstallAddonAsync(string file, CancellationToken cancellationToken,
+        IProgress<LocalInstallProgress>? progress)
     {
         string work = Path.Combine(TemporaryFolder.Path, "HoYoShadeHub.Local", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(work);
@@ -368,7 +383,9 @@ public sealed class LocalPackageInstaller
 
             if (Path.GetExtension(file).Equals(".zip", StringComparison.OrdinalIgnoreCase))
             {
-                ZipExtractor.ExtractToDirectory(file, Path.Combine(work, "payload"));
+                progress?.Report(new(2, "正在解压插件…"));
+                ZipExtractor.ExtractToDirectory(file, Path.Combine(work, "payload"), cancellationToken,
+                    fraction => progress?.Report(new(fraction is null ? null : 2 + fraction * 28, "正在解压插件…")));
                 addonFiles.AddRange(Directory.EnumerateFiles(
                     Path.Combine(work, "payload"), "*", SearchOption.AllDirectories)
                     .Where(f => IsAddonFile(f)));
@@ -383,7 +400,12 @@ public sealed class LocalPackageInstaller
                 throw new FileNotFoundException("包里没有找到 .addon64 / .addon32 文件。");
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
             Directory.CreateDirectory(_addonsDirectory);
+            long totalBytes = addonFiles.Sum(source => new FileInfo(source).Length);
+            long copiedBytes = 0, lastReport = 0;
+            byte[] buffer = new byte[128 * 1024];
+            progress?.Report(new(30, $"正在复制 {addonFiles.Count} 个插件…"));
 
             var installed = new List<string>();
             foreach (string source in addonFiles)
@@ -392,13 +414,40 @@ public sealed class LocalPackageInstaller
                 // 与 ExtensionInstaller 相同的「临时文件 + Move 换 inode」：直接 Copy 覆盖会保留目标 inode，
                 // 指着它的硬链接（版本归档 / 每游戏插件包）内容会被一起改掉 —— 老版本就白归档了
                 string target = Path.Combine(_addonsDirectory, Path.GetFileName(source));
-                string staged = target + ".hysx-new";
-                File.Copy(source, staged, overwrite: true);
-                File.Move(staged, target, overwrite: true);
+                string staged = target + ".hysx-new-" + Guid.NewGuid().ToString("N");
+                try
+                {
+                    await using (var input = new FileStream(source, FileMode.Open, FileAccess.Read,
+                        FileShare.Read, buffer.Length, useAsync: true))
+                    await using (var output = new FileStream(staged, FileMode.CreateNew, FileAccess.Write,
+                        FileShare.None, buffer.Length, useAsync: true))
+                    {
+                        int count;
+                        while ((count = await input.ReadAsync(buffer, cancellationToken).ConfigureAwait(false)) != 0)
+                        {
+                            await output.WriteAsync(buffer.AsMemory(0, count), cancellationToken).ConfigureAwait(false);
+                            copiedBytes += count;
+                            long now = Environment.TickCount64;
+                            if (now - lastReport >= 100)
+                            {
+                                lastReport = now;
+                                progress?.Report(new(totalBytes == 0 ? 30 : 30 + 49 * Math.Min(1d, (double)copiedBytes / totalBytes),
+                                    $"正在复制 {Path.GetFileName(source)}…"));
+                            }
+                        }
+                        await output.FlushAsync(cancellationToken).ConfigureAwait(false);
+                    }
+                    cancellationToken.ThrowIfCancellationRequested();
+                    File.Move(staged, target, overwrite: true);
+                }
+                finally
+                {
+                    if (File.Exists(staged)) File.Delete(staged);
+                }
                 installed.Add(Path.GetFileName(target));
             }
 
-            await Task.CompletedTask;
+            progress?.Report(new(80, $"已写入 {installed.Count} 个插件，正在读取版本…"));
 
             string primary = installed[0];
             return new LocalPackageInstallResult(

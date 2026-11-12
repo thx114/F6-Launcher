@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Win32.SafeHandles;
 
 namespace HoYoShadeHub.Features.GameLauncher;
 
@@ -17,22 +18,10 @@ namespace HoYoShadeHub.Features.GameLauncher;
 /// </summary>
 internal sealed class FpsUnlocker : IDisposable
 {
-    private const uint ProcessCreateThread = 0x0002;
-    private const uint ProcessQueryInformation = 0x0400;
-    private const uint ProcessVmOperation = 0x0008;
-    private const uint ProcessVmWrite = 0x0020;
-    private const uint ProcessVmRead = 0x0010;
-    private const uint ProcessSynchronize = 0x00100000;
-    private const uint MemCommit = 0x1000;
-    private const uint MemReserve = 0x2000;
-    private const uint MemRelease = 0x8000;
-    private const uint PageExecuteReadwrite = 0x40;
     private const uint Th32CsSnapModule = 0x00000008;
-    private const uint StillActive = 259;
 
     private const int SyncThreadOffset = 0x50;
     private const int FpsValueRemoteOffset = 0x194;
-    private const int ShellcodeSize = 0x1A0;
 
     private readonly byte[] _patternBytes;
     private readonly bool[] _patternMask;
@@ -40,9 +29,21 @@ internal sealed class FpsUnlocker : IDisposable
 
     /// <summary>数据由 FpsUnlockDataService 解析本地存储得到（调用方负责兜底）</summary>
     public FpsUnlocker(byte[] shellcodeConst, (byte[] bytes, bool[] mask) pattern)
+        : this(shellcodeConst, pattern, new FpsRemoteNative())
     {
-        _shellcodeConst = shellcodeConst ?? throw new ArgumentNullException(nameof(shellcodeConst));
-        (_patternBytes, _patternMask) = pattern;
+    }
+
+    internal FpsUnlocker(byte[] shellcodeConst, (byte[] bytes, bool[] mask) pattern, IFpsRemoteNative native)
+    {
+        ArgumentNullException.ThrowIfNull(shellcodeConst);
+        if (shellcodeConst.Length < FpsValueRemoteOffset + sizeof(int) || shellcodeConst.Length > 0x1000)
+            throw new ArgumentException("Shellcode 长度不符合远端分配范围。", nameof(shellcodeConst));
+        if (pattern.bytes == null || pattern.mask == null || pattern.bytes.Length < 6 || pattern.bytes.Length != pattern.mask.Length)
+            throw new ArgumentException("无效的帧率特征。", nameof(pattern));
+        _shellcodeConst = (byte[])shellcodeConst.Clone();
+        _patternBytes = (byte[])pattern.bytes.Clone();
+        _patternMask = (bool[])pattern.mask.Clone();
+        _lifetime = new FpsRemoteLifetime(native);
     }
 
     /// <summary>跟随程序分发的兜底 shellcode：本地更新数据不存在（首次离线）时使用</summary>
@@ -51,19 +52,16 @@ internal sealed class FpsUnlocker : IDisposable
 0x00,0x00,0x00,0x00,0x00,0xC0,0x9C,0x66,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0x48,0x83,0xEC,0x38,0x8B,0x05,0xA6,0xFF,0xFF,0xFF,0x85,0xC0,0x74,0x5C,0x41,0x89,0xC0,0x33,0xD2,0xB9,0xFF,0xFF,0x1F,0x00,0xFF,0x15,0xA2,0xFF,0xFF,0xFF,0x85,0xC0,0x74,0x48,0x89,0xC6,0x48,0x8B,0x3D,0x8D,0xFF,0xFF,0xFF,0x0F,0x1F,0x44,0x00,0x00,0x89,0xF1,0x48,0x89,0xFA,0x4C,0x8D,0x05,0x08,0x01,0x00,0x00,0x41,0xB9,0x04,0x00,0x00,0x00,0x31,0xC0,0x48,0x89,0x44,0x24,0x20,0xFF,0x15,0x79,0xFF,0xFF,0xFF,0x85,0xC0,0x74,0x12,0xB9,0xF4,0x01,0x00,0x00,0xFF,0x15,0x72,0xFF,0xFF,0xFF,0xE8,0x5D,0x00,0x00,0x00,0xEB,0xCB,0xE8,0x76,0x00,0x00,0x00,0x48,0x83,0xC4,0x38,0xC3,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0x89,0x0D,0xBA,0x00,0x00,0x00,0x31,0xC0,0x83,0xF9,0x1E,0x74,0x0E,0x83,0xF9,0x2D,0x74,0x15,0x2E,0xB9,0xE8,0x03,0x00,0x00,0xEB,0x06,0xCC,0xB9,0x3C,0x00,0x00,0x00,0x89,0x0D,0x0B,0x00,0x00,0x00,0xC3,0x8B,0x0D,0x97,0x00,0x00,0x00,0xEB,0xF1,0xCC,0xB8,0x78,0x00,0x00,0x00,0xC3,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0x8B,0x05,0x7A,0x00,0x00,0x00,0x83,0xF8,0x2D,0x75,0x0C,0x8B,0x05,0x73,0x00,0x00,0x00,0x89,0x05,0xDA,0xFF,0xFF,0xFF,0xC3,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0x48,0x83,0xEC,0x28,0x31,0xC9,0x48,0x8D,0x15,0x33,0x00,0x00,0x00,0x4C,0x8D,0x05,0x3C,0x00,0x00,0x00,0x41,0xB9,0x10,0x00,0x00,0x00,0xFF,0x15,0xD8,0xFE,0xFF,0xFF,0x89,0xF1,0xFF,0x15,0xD8,0xFE,0xFF,0xFF,0x48,0x83,0xC4,0x28,0xC3,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0x53,0x79,0x6E,0x63,0x20,0x66,0x61,0x69,0x6C,0x65,0x64,0x21,0x00,0x00,0x00,0x00,0x45,0x72,0x72,0x6F,0x72,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00
     ];
 
-    private readonly IntPtr _fpsValueSlot = Marshal.AllocHGlobal(4);
-    private readonly CancellationTokenSource _cts = new();
-
-    private IntPtr _process;
-    private IntPtr _remoteShellcode;
+    private readonly FpsRemoteLifetime _lifetime;
     private IntPtr _gameFpsVar;
     private Task? _loopTask;
     private bool _disposed;
+    private bool _attachStarted;
 
     /// <summary>目标帧率（写入本进程槽位，游戏内同步线程回读）</summary>
     public void SetTarget(int fps)
     {
-        Marshal.WriteInt32(_fpsValueSlot, fps);
+        _lifetime.SetTarget(fps);
     }
 
     /// <summary>
@@ -72,15 +70,68 @@ internal sealed class FpsUnlocker : IDisposable
     /// </summary>
     public async Task<bool> AttachAsync(Process game, int targetFps, TimeSpan timeout)
     {
+        lock (_lifetime.Gate)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_attachStarted) throw new InvalidOperationException("FpsUnlocker 只允许一次 Attach。");
+            _lifetime.SetTarget(targetFps);
+            // slot 写入失败尚未开始 Attach；Dispose 仍须能直接完成 local 使用者交接。
+            _attachStarted = true;
+        }
+
+        bool attached = false;
+        SafeProcessHandle? originalProcess = null;
+        bool originalProcessLease = false;
+        try
+        {
+            // Process 可能来自枚举入口且尚未缓存 handle，必须在首次 await 前固定身份。
+            // 不 Dispose 借来的 SafeHandle；只归还自己的 DangerousAddRef。
+            originalProcess = game.SafeHandle;
+            originalProcess.DangerousAddRef(ref originalProcessLease);
+            attached = await AttachCoreAsync(game, timeout, originalProcess.DangerousGetHandle()).ConfigureAwait(false);
+            return attached;
+        }
+        catch (OperationCanceledException) when (_lifetime.Cancellation.IsCancellationRequested)
+        {
+            LastError = "帧率解锁附加已取消。";
+            return false;
+        }
+        catch (Win32Exception ex)
+        {
+            LastError = $"{ex.Message} win32={ex.NativeErrorCode}。";
+            return false;
+        }
+        finally
+        {
+            try
+            {
+                if (originalProcessLease) originalProcess!.DangerousRelease();
+            }
+            finally
+            {
+                lock (_lifetime.Gate)
+                {
+                    _lifetime.CompleteAttach(_loopTask);
+                    if (!attached)
+                    {
+                        _disposed = true;
+                        _lifetime.Retire();
+                    }
+                }
+            }
+        }
+    }
+
+    private async Task<bool> AttachCoreAsync(Process game, TimeSpan timeout, IntPtr originalProcess)
+    {
         if (MultiplayerGameGuard.IsActive)
         {
             LastError = MultiplayerGameGuard.BlockReason();
             return false;
         }
 
-        SetTarget(targetFps);
-
-        ModuleInfo module = await WaitForBaseModuleAsync(game, timeout, _cts.Token);
+        CancellationToken token = _lifetime.Cancellation.Token;
+        ModuleInfo module = await WaitForBaseModuleAsync(game, timeout, token).ConfigureAwait(false);
         if (module.Base == IntPtr.Zero)
         {
             // 游戏在中途被关掉了 —— 不是错误，静默跳过（调用方据此区分要不要弹提示）
@@ -89,18 +140,16 @@ internal sealed class FpsUnlocker : IDisposable
             return false;
         }
 
-        _process = OpenProcess(
-            ProcessCreateThread | ProcessQueryInformation | ProcessVmOperation | ProcessVmWrite | ProcessVmRead | ProcessSynchronize,
-            false, game.Id);
-        if (_process == IntPtr.Zero)
+        token.ThrowIfCancellationRequested();
+        if (!_lifetime.Open(game.Id, originalProcess))
         {
-            LastError = $"OpenProcess 失败 win32={Marshal.GetLastWin32Error()}（多半是权限：游戏提权时 Hub 也要用管理员启动）。";
+            LastError = "目标进程身份校验失败（已退出或 PID 被复用），拒绝附加。";
             return false;
         }
 
         // 读 PE 头（前 4KB），解析 .text 节
         byte[] peBuffer = new byte[0x1000];
-        if (!ReadProcessMemory(_process, module.Base, peBuffer, 0x1000, out _))
+        if (!_lifetime.Read(module.Base, peBuffer))
         {
             LastError = $"读 PE 头失败 win32={Marshal.GetLastWin32Error()}。";
             return false;
@@ -144,7 +193,7 @@ internal sealed class FpsUnlocker : IDisposable
 
         IntPtr textRemote = module.Base + textRva;
         byte[] textLocal = new byte[textSize];
-        if (!ReadProcessMemory(_process, textRemote, textLocal, (nuint)textSize, out _))
+        if (!_lifetime.Read(textRemote, textLocal))
         {
             LastError = $"读 .text 段失败 win32={Marshal.GetLastWin32Error()}。";
             return false;
@@ -163,32 +212,14 @@ internal sealed class FpsUnlocker : IDisposable
         int disp = BitConverter.ToInt32(textLocal, patternOffset + 2);
         _gameFpsVar = textRemote + (rip + disp);
 
-        byte[] shellcode = BuildShellcode();
-
-        _remoteShellcode = VirtualAllocEx(_process, IntPtr.Zero, 0x1000, MemCommit | MemReserve, PageExecuteReadwrite);
-        if (_remoteShellcode == IntPtr.Zero)
+        lock (_lifetime.Gate)
         {
-            LastError = $"VirtualAllocEx 失败 win32={Marshal.GetLastWin32Error()}。";
-            return false;
+            token.ThrowIfCancellationRequested();
+            _lifetime.Install(BuildShellcode(), SyncThreadOffset);
+            // 不把 token 传给 Task.Run，保证保存的 task 确实覆盖所有 local loop 使用。
+            _loopTask = Task.Run(LoopAsync);
+            return true;
         }
-
-        if (!WriteProcessMemory(_process, _remoteShellcode, shellcode, (nuint)shellcode.Length, out _))
-        {
-            LastError = $"写 shellcode 失败 win32={Marshal.GetLastWin32Error()}。";
-            return false;
-        }
-
-        IntPtr thread = CreateRemoteThread(
-            _process, IntPtr.Zero, 0, _remoteShellcode + SyncThreadOffset, IntPtr.Zero, 0, out _);
-        if (thread == IntPtr.Zero)
-        {
-            LastError = $"创建远程线程失败 win32={Marshal.GetLastWin32Error()}。";
-            return false;
-        }
-        CloseHandle(thread);
-
-        _loopTask = Task.Run(LoopAsync, _cts.Token);
-        return true;
     }
     /// <summary>失败原因（AttachAsync 返回 false 时）；游戏已退出导致的跳过是 null 且 <see cref="SkippedGameExited"/> 为 true</summary>
     public string? LastError { get; private set; }
@@ -207,7 +238,7 @@ internal sealed class FpsUnlocker : IDisposable
         IntPtr u32 = GetModuleHandle("user32.dll");
 
         WriteUInt32(sc, 0x00, (uint)Environment.ProcessId);
-        WriteUInt64(sc, 0x08, (ulong)_fpsValueSlot.ToInt64());
+        WriteUInt64(sc, 0x08, (ulong)_lifetime.Slot.ToInt64());
         WriteUInt64(sc, 0x10, (ulong)GetProcAddress(k32, "OpenProcess").ToInt64());
         WriteUInt64(sc, 0x18, (ulong)GetProcAddress(k32, "ReadProcessMemory").ToInt64());
         WriteUInt64(sc, 0x20, (ulong)GetProcAddress(k32, "Sleep").ToInt64());
@@ -262,18 +293,21 @@ internal sealed class FpsUnlocker : IDisposable
     {
         byte[] readBuffer = new byte[4];
 
-        while (!_cts.IsCancellationRequested)
+        CancellationToken token = _lifetime.Cancellation.Token;
+        while (!token.IsCancellationRequested)
         {
             try
             {
-                if (!GetExitCodeProcess(_process, out uint exitCode) || exitCode != StillActive)
+                uint wait = _lifetime.WaitProcess();
+                if (wait == FpsRemoteLifetime.Signaled)
                 {
                     break;
                 }
 
-                await Task.Delay(2000, _cts.Token);
+                await Task.Delay(2000, token).ConfigureAwait(false);
+                if (wait != FpsRemoteLifetime.Timeout) continue;
 
-                if (!ReadProcessMemory(_process, _gameFpsVar, readBuffer, 4, out _))
+                if (!_lifetime.Read(_gameFpsVar, readBuffer))
                 {
                     continue;
                 }
@@ -284,15 +318,11 @@ internal sealed class FpsUnlocker : IDisposable
                     continue;
                 }
 
-                int target = Marshal.ReadInt32(_fpsValueSlot);
+                int target = _lifetime.ReadTarget();
                 if (current != target)
                 {
-                    WriteProcessMemory(
-                        _process,
-                        _remoteShellcode + FpsValueRemoteOffset,
-                        BitConverter.GetBytes(target),
-                        4,
-                        out _);
+                    if (!_lifetime.Write(_lifetime.Remote + FpsValueRemoteOffset, BitConverter.GetBytes(target)))
+                        break; // 无法继续维护时转交同一个 owner，绝不据此释放 payload。
                 }
             }
             catch (OperationCanceledException)
@@ -304,6 +334,9 @@ internal sealed class FpsUnlocker : IDisposable
                 // 单轮读写失败，下一轮继续
             }
         }
+
+        // 自然退出或维护写失败也必须登记退休；Pump 会等待当前 loop task 真正完成。
+        _lifetime.Retire();
     }
 
     private static async Task<ModuleInfo> WaitForBaseModuleAsync(Process game, TimeSpan timeout, CancellationToken ct)
@@ -370,45 +403,18 @@ internal sealed class FpsUnlocker : IDisposable
 
     public void Dispose()
     {
-        if (_disposed)
+        lock (_lifetime.Gate)
         {
-            return;
+            if (_disposed) return;
+            _disposed = true;
+            if (!_attachStarted) _lifetime.CompleteAttach(null);
+            _lifetime.Retire();
         }
-
-        _disposed = true;
-
-        try
-        {
-            _cts.Cancel();
-        }
-        catch
-        {
-        }
-
-        try
-        {
-            _loopTask?.Wait(1500);
-        }
-        catch
-        {
-        }
-
-        if (_process != IntPtr.Zero)
-        {
-            bool alive = GetExitCodeProcess(_process, out uint code) && code == StillActive;
-            if (alive && _remoteShellcode != IntPtr.Zero)
-            {
-                // 清零 shellcode 头部的 unlocker PID，游戏内同步线程读到 0 自行退出
-                WriteProcessMemory(_process, _remoteShellcode, new byte[4], 4, out _);
-                VirtualFreeEx(_process, _remoteShellcode, 0, MemRelease);
-            }
-
-            CloseHandle(_process);
-        }
-
-        Marshal.FreeHGlobal(_fpsValueSlot);
-        _cts.Dispose();
     }
+
+    internal static Task DrainRetirementsAsync() => FpsRemoteLifetime.DrainRetirementsAsync();
+
+    internal static bool HasPendingRetirements => FpsRemoteLifetime.HasPendingRetirements;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct ModuleInfo
@@ -435,31 +441,6 @@ internal sealed class FpsUnlocker : IDisposable
         [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
         public string szExePath;
     }
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern IntPtr OpenProcess(uint desiredAccess, [MarshalAs(UnmanagedType.Bool)] bool inheritHandle, int processId);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern IntPtr VirtualAllocEx(IntPtr process, IntPtr address, nuint size, uint allocationType, uint protect);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool VirtualFreeEx(IntPtr process, IntPtr address, nuint size, uint freeType);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool WriteProcessMemory(IntPtr process, IntPtr baseAddress, byte[] buffer, nuint size, out nuint written);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool ReadProcessMemory(IntPtr process, IntPtr baseAddress, byte[] buffer, nuint size, out nuint read);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern IntPtr CreateRemoteThread(IntPtr process, IntPtr attributes, nuint stackSize, IntPtr startAddress, IntPtr parameter, uint creationFlags, out uint threadId);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool GetExitCodeProcess(IntPtr process, out uint exitCode);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]

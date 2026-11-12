@@ -1,4 +1,5 @@
 using HoYoShadeHub.Core.HoYoPlay;
+using HoYoShadeHub.Extensions.Games;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
@@ -587,9 +588,10 @@ internal sealed class XxmiInjector
         StartupInfo startupInfo = new() { cb = Marshal.SizeOf<StartupInfo>() };
 
         // 只挂起，**不要** CREATE_NEW_CONSOLE：不然会冒一个黑窗出来（用户反馈过）
-        if (!CreateProcessW(null, commandLine, IntPtr.Zero, IntPtr.Zero, false,
+        ProcessInformation processInformation = default;
+        if (!GameLaunchGuard.Start(gameExePath, () => CreateProcessW(null, commandLine, IntPtr.Zero, IntPtr.Zero, false,
                 CreateSuspended, IntPtr.Zero, Path.GetDirectoryName(gameExePath),
-                ref startupInfo, out ProcessInformation processInformation))
+                ref startupInfo, out processInformation)))
         {
             int error = Marshal.GetLastWin32Error();
             Logger.LogWarning("XXMI：挂起启动游戏失败，错误码 {Error}", error);
@@ -780,7 +782,7 @@ internal sealed class XxmiInjector
             };
             info.ArgumentList.Add(exePath); info.ArgumentList.Add("-x");
             info.ArgumentList.Add(importer); info.ArgumentList.Add("-n");
-            using Process? started = Process.Start(info);
+            using Process? started = GameLaunchGuard.Start(exePath, () => Process.Start(info));
             if (started is null) return new(false, false, "XXMI 官方启动器未能启动");
             RecordOwnedLauncher(started, launcher);
             Logger.LogInformation("XXMI official baseline launch: importer {Importer}, pid {Pid}, target {Exe}; XXMI owns game creation", importer, started.Id, exePath);

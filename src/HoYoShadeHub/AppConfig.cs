@@ -1871,10 +1871,10 @@ public static class AppConfig
             Extensions.Services.OptiScalerBuild? build = null;
             if (!string.IsNullOrWhiteSpace(id))
             {
-                build = library.List().FirstOrDefault(b => b.Id == id);
+                build = library.List(includeDirectorySize: false).FirstOrDefault(b => b.Id == id);
             }
 
-            build ??= library.GetSelected();
+            build ??= library.GetSelected(includeDirectorySize: false);
             if (build is null || !IsOptiScalerBuildEnabled(build.Id))
             {
                 return null;

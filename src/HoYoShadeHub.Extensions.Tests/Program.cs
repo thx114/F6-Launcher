@@ -13,6 +13,31 @@ using System.IO.Compression;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
+if (args.Length == 3 && args[0] == "launch-nr-probe")
+    return HoYoShadeHub.Extensions.Tests.LaunchPreparationTests.Probe(args[1], args[2]);
+
+if (args.Length == 1 && args[0] == "launch-preparation-tests")
+    return HoYoShadeHub.Extensions.Tests.LaunchPreparationTests.Run();
+
+if (args.Length == 1 && args[0] == "game-process-helper")
+{
+    Console.WriteLine("ready");
+    await Console.In.ReadLineAsync();
+    return 0;
+}
+
+if (args.Length == 1 && args[0] == "game-process-tests")
+    return await HoYoShadeHub.Extensions.Tests.GameProcessDiscoveryTests.RunAsync();
+
+if (args.Length == 2 && args[0] == "game-process-snapshot")
+{
+    using var targetSnapshot = GameProcessDiscovery.FindRunning(args[1]);
+    Console.WriteLine(targetSnapshot is null ? "No live target" : $"Live target: {targetSnapshot.ProcessName} ({targetSnapshot.Id})");
+    var conflict = GameLaunchGuard.FindConflict(args[1]);
+    Console.WriteLine(conflict is null ? "Launch permitted: no matching process" : "Launch blocked: " + conflict.Message);
+    return 0;
+}
+
 if (args.Length == 1 && args[0] == "portable-entry-tests")
 {
     HoYoShadeHub.Extensions.Tests.PortableLauncherLocationTests.Run();
@@ -23,6 +48,7 @@ if (args.Length == 1 && args[0] == "pack-ini-tests")
 {
     await HoYoShadeHub.Extensions.Tests.PackIniActionTests.RunAsync();
     HoYoShadeHub.Extensions.Tests.GameLaunchIniPreparationTests.Run();
+    HoYoShadeHub.Extensions.Tests.GamePackIniBindingTests.Run();
     return 0;
 }
 
@@ -93,6 +119,9 @@ if (args.Length == 1 && args[0] == "package-install-tests")
     return 0;
 }
 
+if (args.Length == 1 && args[0] == "pack-permission-tests")
+    return await HoYoShadeHub.Extensions.Tests.PackPermissionTests.RunAsync();
+
 if (args.Length == 1 && args[0] == "pack-consent-migration-tests")
 {
     Console.WriteLine($"PASS {HoYoShadeHub.Extensions.Tests.PackConsentMigrationTests.Run()} consent and pending migration checks");
@@ -104,6 +133,12 @@ if (args.Length == 1 && args[0] == "ui-runtime-tests")
 
 if (args.Length == 1 && args[0] == "opti-page-loading-tests")
     return HoYoShadeHub.Extensions.Tests.OptiPageLoadingTests.Run();
+
+if (args.Length == 1 && args[0] == "opti-download-tests")
+    return await HoYoShadeHub.Extensions.Tests.OptiDownloadTests.RunAsync();
+
+if (args.Length == 2 && args[0] == "opti-download-probe")
+    return await HoYoShadeHub.Extensions.Tests.OptiDownloadTests.ProbeAsync(args[1]);
 
 if (args.Length == 1 && args[0] == "download-tests")
     return await HoYoShadeHub.Extensions.Tests.DownloadServiceTests.RunAsync();

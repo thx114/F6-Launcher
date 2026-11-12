@@ -59,7 +59,7 @@
       "repository": "janblade/OptiScaler-F5-DLSSNR-Multipass",
       "description": "janblade 的 F5 分支：F5 版 DLSSNR + multipass，带 vit-reuse / nvidia-residual / pre/post-SR 预设，含 RTX 40 MFG 测试构建。",
       "tagPattern": "^v\\d",
-      "assetPattern": "OptiScaler-DLSSNR-F5-*.zip",
+      "assetPattern": "*OptiScaler*F5*.zip",
       "tags": [
         "dlssnr",
         "f5",

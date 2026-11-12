@@ -26,44 +26,43 @@ public static class PackActionConsentDialog
     private static int _showing;
 
     /// <param name="gameNames">这批动作会落到哪些游戏上（导入时可能一次多个服）；null = 当前游戏</param>
-    /// <returns>null = 下次再说（不记同意，下次还会问）；否则是用户**没勾选**的动作名（空 = 全装）</returns>
-    public static async Task<List<string>?> ShowAsync(XamlRoot xamlRoot, string packRoot, List<PackAutoAction> actions, string? gameNames = null)
+    /// <returns>null = 下次再说；否则保留每个原始步骤的勾选结果。</returns>
+    public static async Task<PackStepSelection?> ShowAsync(XamlRoot xamlRoot, string packRoot, List<PackAutoAction> actions, string? gameNames = null)
     {
         if (System.Threading.Interlocked.CompareExchange(ref _showing, 1, 0) != 0) return null;
         try { return await ShowCoreAsync(xamlRoot, packRoot, actions, gameNames); }
         finally { System.Threading.Interlocked.Exchange(ref _showing, 0); }
     }
 
-    private static async Task<List<string>?> ShowCoreAsync(XamlRoot xamlRoot, string packRoot,
+    private static async Task<PackStepSelection?> ShowCoreAsync(XamlRoot xamlRoot, string packRoot,
         List<PackAutoAction> actions, string? gameNames)
     {
         var panel = new StackPanel { Spacing = 10 };
         panel.Children.Add(new TextBlock
         {
-            Text = "这个覆盖包（auto.json）请求执行以下自定义动作。勾选要启用的（默认全部启用）："
+            Text = "勾选要应用的项目（默认全部勾选）。未勾选的项目现在及以后启动时都不会执行："
                    + (string.IsNullOrWhiteSpace(gameNames) ? string.Empty : $"\n影响的游戏：{gameNames}"),
             TextWrapping = TextWrapping.Wrap,
         });
 
-        var boxes = new List<CheckBox>();
+        var boxes = new List<(PackAutoAction Action, int Index, CheckBox Box)>();
         foreach (PackAutoAction action in actions)
         {
-            var box = new CheckBox { IsChecked = true, Tag = action.Name };
-            var content = new StackPanel { Spacing = 2 };
-            content.Children.Add(new TextBlock
+            panel.Children.Add(new TextBlock
             {
                 Text = action.Name + (action.RunOnLaunch ? "　（每次启动前自动检查）" : string.Empty),
                 FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
                 TextWrapping = TextWrapping.Wrap,
             });
 
-            int index = 1;
-            foreach (PackActionStep step in action.Steps)
+            for (int index = 0; index < action.Steps.Count; index++)
             {
+                PackActionStep step = action.Steps[index];
                 bool highRisk = PackActionDescriber.IsHighRisk(step);
+                var content = new StackPanel { Spacing = 2 };
                 var stepText = new TextBlock
                 {
-                    Text = $"{index}. {(highRisk ? "⚠ " : string.Empty)}{PackActionDescriber.Describe(step, packRoot)}",
+                    Text = $"{index + 1}. {(highRisk ? "⚠ " : string.Empty)}{PackActionDescriber.Describe(step, packRoot)}",
                     TextWrapping = TextWrapping.Wrap,
                 };
                 if (highRisk)
@@ -83,12 +82,10 @@ public static class PackActionConsentDialog
                     });
                 }
 
-                index++;
+                var box = new CheckBox { IsChecked = true, Content = content, HorizontalContentAlignment = HorizontalAlignment.Stretch };
+                boxes.Add((action, index, box));
+                panel.Children.Add(box);
             }
-
-            box.Content = content;
-            boxes.Add(box);
-            panel.Children.Add(box);
         }
 
         var scroll = new ScrollViewer { Content = panel, MaxHeight = 420 };
@@ -97,20 +94,36 @@ public static class PackActionConsentDialog
             XamlRoot = xamlRoot,
             Title = "覆盖包动作确认",
             Content = scroll,
-            PrimaryButtonText = "启用勾选的",
+            PrimaryButtonText = "应用（3 秒）",
+            IsPrimaryButtonEnabled = false,
             SecondaryButtonText = "全部不要",
             CloseButtonText = "下次再说",
             DefaultButton = ContentDialogButton.Primary,
             MaxWidth = 560,
         };
 
-        ContentDialogResult result = await dialog.ShowAsync();
-        return result switch
+        var delay = new ConfirmationDelay();
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
+        void UpdateCountdown()
         {
-            ContentDialogResult.Primary => boxes.Where(b => b.IsChecked != true).Select(b => (string)b.Tag!).ToList(),
-            ContentDialogResult.Secondary => actions.Select(a => a.Name).ToList(),
-            _ => null,
-        };
+            dialog.IsPrimaryButtonEnabled = delay.CanApply;
+            dialog.PrimaryButtonText = delay.CanApply ? "应用" : $"应用（{delay.RemainingSeconds} 秒）";
+            if (delay.CanApply) timer.Stop();
+        }
+        timer.Tick += (_, _) => UpdateCountdown();
+        dialog.Opened += (_, _) => { delay.Start(); UpdateCountdown(); timer.Start(); };
+        dialog.Closed += (_, _) => timer.Stop();
+        dialog.PrimaryButtonClick += (_, args) => { if (!delay.CanApply) args.Cancel = true; };
+        ContentDialogResult result;
+        try { result = await dialog.ShowAsync(); }
+        finally { timer.Stop(); }
+        if (result == ContentDialogResult.None) return null;
+        bool Declined((PackAutoAction Action, int Index, CheckBox Box) row) =>
+            result == ContentDialogResult.Secondary || row.Box.IsChecked != true;
+        return new PackStepSelection(
+            new(actions.Where(action => boxes.Where(row => ReferenceEquals(row.Action, action)).All(Declined))
+                .Select(action => action.Name), StringComparer.Ordinal),
+            new(boxes.Where(Declined).Select(row => PackStepSelection.Key(row.Action, row.Index)), StringComparer.Ordinal));
     }
 }
 
@@ -156,10 +169,10 @@ public static class PackActionExecutor
 
     /// <summary>逐个执行没被禁用的动作，返回每个动作的一行摘要</summary>
     public static async Task<List<PackActionOncePolicy.ExecutionResult>> RunAsync(
-        IEnumerable<PackAutoAction> actions, IReadOnlySet<string> disabled, LauncherActionContext context)
+        IEnumerable<PackAutoAction> actions, PackStepSelection selection, LauncherActionContext context)
     {
         List<PackActionOncePolicy.ExecutionResult> batch = await PackActionOncePolicy.RunBatchAsync(
-            actions.Where(action => !disabled.Contains(action.Name)),
+            actions.Where(selection.HasEnabledSteps),
             async action =>
             {
                 var result = await LauncherActionRunner.RunResultAsync(action, context, isPackAction: true);
@@ -179,7 +192,7 @@ public sealed record PackImportActionResult(string Summary, bool HasFailures = f
 /// 游戏已装但 cache\games\ 目录还没生成（全新便携包首导）时，安装器把 GamePack 暂存在
 /// .pending-gamepacks\&lt;hint&gt; —— 这里按「已装游戏」反查暂存并先铺进包目录，
 /// 保证弹窗在导入当场就弹，不用等插件页 / 启动。游戏真没装的不管：游戏出现后插件页兜底。
-/// 没有 auto.json 的旧包自然走不到这里，行为不变。
+/// 导入时先绑定游戏 INI，再独立确认 auto.json；没有动作或暂不执行动作也能找到插件。
 /// </para>
 /// </summary>
 public static class OverlayPackActionPrompter
@@ -261,6 +274,30 @@ public static class OverlayPackActionPrompter
                     continue;
                 }
 
+                if (refreshReimportedPack && GameAddonPackUserContent.HasAny(packRoot))
+                {
+                    try
+                    {
+                        // 拖入已授权安装与路径绑定；auto.json 的授权只控制额外动作。
+                        // 必须放在读取/分组动作之前，无 auto.json、已同意、延后执行都要绑定。
+                        string boundAddonPath = await Task.Run(() =>
+                        {
+                            string addonDirectory = GameAddonPackService.Sync(id, null, host)
+                                ?? throw new IOException("无法铺设覆盖包插件目录，请检查当前 ReShade 宿主。");
+                            return GamePackIniBinding.Bind(entry, host, addonDirectory);
+                        });
+                        _logger.LogInformation("覆盖包导入已绑定 {Game}：{Ini} → {AddonPath}", gameKey, entry.ReShadeIniPath, boundAddonPath);
+                        summaries.Add($"【{entry.DisplayName}】已绑定 ReShade.ini 的 AddonPath → {boundAddonPath}");
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Bind imported pack before actions ({Game})", gameKey);
+                        summaries.Add($"【{entry.DisplayName}】覆盖包文件已安装，但 INI 绑定失败：{ex.Message}");
+                        hasFailures = true;
+                        continue;
+                    }
+                }
+
                 PackAutoActionSnapshot? snapshot = PackAutoActionSnapshot.TryLoad(packRoot);
                 if (snapshot is null)
                 {
@@ -297,10 +334,10 @@ public static class OverlayPackActionPrompter
         foreach (var (packRoot, hash, actions, games) in groups.Values)
         {
             string gameNames = string.Join("、", games.Select(g => g.Entry.DisplayName));
-            List<string>? disabled;
+            PackStepSelection? selection;
             try
             {
-                disabled = await PackActionConsentDialog.ShowAsync(xamlRoot, packRoot, actions, gameNames);
+                selection = await PackActionConsentDialog.ShowAsync(xamlRoot, packRoot, actions, gameNames);
             }
             catch (Exception ex)
             {
@@ -310,12 +347,11 @@ public static class OverlayPackActionPrompter
                 continue;
             }
 
-            if (disabled is null)
+            if (selection is null)
             {
                 continue;   // 下次再说：不记同意，插件页仅显示显式确认入口
             }
 
-            var disabledSet = new HashSet<string>(disabled, StringComparer.Ordinal);
             foreach ((GameId id, GameEntry entry, PackAutoActionSnapshot snapshot) in games)
             {
                 try
@@ -328,11 +364,11 @@ public static class OverlayPackActionPrompter
                         hasFailures = true;
                         continue;
                     }
-                    PackActionConsent.Save(id.GameBiz.Value, hash, disabled);
+                    PackActionConsent.Save(id.GameBiz.Value, hash, selection);
 
                     // 首次安装必须先取得可用目标；失败时停在副作用/once reservation 之前。
                     GameLaunchIniPreparation.EnsurePackActionTarget(entry, host,
-                        snapshot.LoadActions().Where(action => !disabledSet.Contains(action.Name)));
+                        snapshot.LoadActions().Where(selection.HasEnabledSteps), selection.IsEnabled);
 
                     // 先把这个游戏的 ini 定向好、包 Addons 铺好，再跑动作：
                     // set_addons 按 AddonPath 目录扫文件写 [ADDON] DisabledAddons，
@@ -358,8 +394,13 @@ public static class OverlayPackActionPrompter
 
                     LauncherActionContext context = PackActionExecutor.BuildContext(
                         id, entry, host, gamePackRoot, xamlRoot, interactive: true, report, snapshot);
-                    List<PackActionOncePolicy.ExecutionResult> results = await PackActionExecutor.RunAsync(snapshot.LoadActions(), disabledSet, context);
+                    List<PackActionOncePolicy.ExecutionResult> results = await PackActionExecutor.RunAsync(snapshot.LoadActions(), selection, context);
                     hasFailures |= results.Any(result => result.Blocked);
+
+                    // auto.json 可能在最后一步写入旧的相对 AddonPath。覆盖包导入的最终状态
+                    // 必须仍然指向本游戏的专属包，否则插件文件虽已落盘，游戏页会扫描到空目录。
+                    string boundAddonPath = GamePackIniBinding.Bind(entry, host, GameAddonPack.AddonDirectory(cacheRoot, id.GameBiz.Value));
+                    _logger.LogInformation("覆盖包动作后已复核绑定 {Game}：{Ini} → {AddonPath}", id.GameBiz.Value, entry.ReShadeIniPath, boundAddonPath);
                     if (results.Count > 0)
                     {
                         summaries.Add($"【{entry.DisplayName}】\n" + string.Join("\n", results.Select(result => result.Summary)));

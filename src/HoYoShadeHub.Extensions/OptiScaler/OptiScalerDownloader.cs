@@ -39,16 +39,21 @@ public sealed class OptiScalerDownloader
 
     /// <summary>这个版本里能装的压缩包（.zip，去掉 sha256 清单那些）</summary>
     public async Task<List<string>> ListAssetsAsync(OptiScalerSource source, string tag, CancellationToken cancellationToken = default)
+        => (await ListAssetChoicesAsync(source, tag, cancellationToken)).Names;
+
+    public sealed record AssetChoices(List<string> Names, bool PatternMatched);
+
+    /// <summary>Keep all usable names when a stale catalog filter matches nothing; UI must explicitly ask.</summary>
+    public async Task<AssetChoices> ListAssetChoicesAsync(OptiScalerSource source, string tag, CancellationToken cancellationToken = default)
     {
         List<string> names = await _resolver.GetAssetNamesFromHtmlAsync(source.Repository, tag, cancellationToken);
-        IEnumerable<string> filtered = names.Where(IsUsableAsset);
-
+        List<string> usable = [.. names.Where(IsUsableAsset).Order(StringComparer.OrdinalIgnoreCase)];
         if (!string.IsNullOrWhiteSpace(source.AssetPattern))
         {
-            filtered = filtered.Where(n => GlobMatcher.IsSimpleMatch(source.AssetPattern, n));
+            List<string> matched = [.. usable.Where(n => GlobMatcher.IsSimpleMatch(source.AssetPattern, n))];
+            return new(matched.Count > 0 ? matched : usable, matched.Count > 0 || usable.Count == 0);
         }
-
-        return [.. filtered.Order(StringComparer.OrdinalIgnoreCase)];
+        return new(usable, true);
     }
 
     /// <summary>
@@ -128,8 +133,10 @@ public sealed class OptiScalerDownloader
 
         if (string.IsNullOrWhiteSpace(asset))
         {
-            List<string> assets = await ListAssetsAsync(source, tag, cancellationToken);
-            asset = PickAsset(assets);
+            AssetChoices choices = await ListAssetChoicesAsync(source, tag, cancellationToken);
+            if (!choices.PatternMatched)
+                throw new InvalidOperationException("目录的文件名规则已过期，请在下载界面明确选择主包后重试。");
+            asset = PickAsset(choices.Names);
         }
 
         if (string.IsNullOrWhiteSpace(asset))

@@ -89,7 +89,10 @@ param(
     [switch] $SkipBaseBuild,
 
     # 跳过 zip 结构与大小校验
-    [switch] $SkipVerify
+    [switch] $SkipVerify,
+
+    # 构建时保护正在使用的 Full 目录；它可能包含用户配置、缓存、数据库和日志。
+    [string[]] $ProtectedPackagePath = @()
 )
 
 $ErrorActionPreference = "Stop"
@@ -292,7 +295,8 @@ try {
     # 每次只保留本次 Full 成品；先清前次暂存目录、普通包和 Full ZIP。
     # SDK、_research、测试安装与源码构建缓存不属于打包暂存，不能混删。
     $preserve = if ($SkipBaseBuild) { $outDir } else { '' }
-    Clear-PreviousPackages -RepoRoot $repoRoot -ReleaseDirectory $zipDir -PreserveOutput $preserve -ProtectedPaths @($shadeRoot) -Records $cleanupRecords
+    $protectedPaths = @($shadeRoot) + @($ProtectedPackagePath | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    Clear-PreviousPackages -RepoRoot $repoRoot -ReleaseDirectory $zipDir -PreserveOutput $preserve -ProtectedPaths $protectedPaths -Records $cleanupRecords
     $stagingOwned = $true
 
     # 复用输出目录时，先清掉上一步完整包添加的 HoYoShade 框架：内层 package.ps1 会把

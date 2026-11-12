@@ -7,6 +7,7 @@ internal static class UiRuntimeTests
     public static async Task<(int Passed, int Failed)> RunAsync()
     {
         int passed = 0, failed = 0;
+        passed += DeferredPickerUpdateTests.Run();
         void Check(bool condition, string name)
         {
             if (condition) { passed++; Console.WriteLine("[PASS] UI " + name); }

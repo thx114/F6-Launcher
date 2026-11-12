@@ -155,10 +155,12 @@ public sealed partial class GamePluginPage : PageBase
         if (CurrentGameId is not { } game || _entry is null || _host is null || !_isPageAlive) return;
         if (_isWorking)
         {
-            // 同游戏可能有多张 NR 卡片；忙碌时撤回另一个控件的改选，避免显示未提交的值。
-            combo.Tag = true;
-            try { combo.SelectedItem = e.RemovedItems.FirstOrDefault(); }
-            finally { combo.Tag = false; }
+            // Restore after WinUI finishes the current click; never change selection reentrantly.
+            DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
+            {
+                if (_isPageAlive && combo.IsLoaded && CurrentGameId?.GameBiz == game.GameBiz)
+                    NrVersionPicker.Fill(combo, AppConfig.GetGameNrVersion(game, "reshade"));
+            });
             return;
         }
         var entry = _entry;
@@ -170,10 +172,13 @@ public sealed partial class GamePluginPage : PageBase
             && CurrentGameId?.GameBiz == game.GameBiz && ReferenceEquals(_entry, entry) && ReferenceEquals(_host, host);
         bool wasEnabled = combo.IsEnabled;
         _isWorking = true;
-        combo.IsEnabled = false;
         TextBlock_Status.Text = "正在校验并切换本游戏 ReShade NR：" + (version ?? "插件默认") + "…";
         try
         {
+            await NrVersionPicker.CloseForSelectionAsync(combo, cancellationToken);
+            if (!IsCurrent()) return;
+            combo.IsEnabled = false;
+            _logger.LogInformation("ReShade NR selection starting: {Game}; version={Version}", game.GameBiz.Value, version ?? "default");
             await NrRuntimeWorkQueue.RunAsync(() =>
             {
                 // 在队列中重读，避免排队期间其他页面已完成切换却被旧 previous 回滚。
@@ -209,8 +214,12 @@ public sealed partial class GamePluginPage : PageBase
                 // 开始同步后不半途取消；成功才向 UI 报告已提交。
             }, cancellationToken);
             if (!IsCurrent()) return;
-            LoadGame(entry);
+            // Switching NR changes the runtime, not the addon cards. Preserve their containers,
+            // expansion and focus instead of clearing the collection under a selection callback.
+            foreach (var addon in Addons) addon.NrVersionText = "NR：" + (version ?? "插件默认");
+            NrVersionPicker.RefreshInline(AddonList, version);
             TextBlock_Status.Text = "本游戏 ReShade NR：" + (version ?? "插件默认") + "（重启游戏生效）";
+            _logger.LogInformation("ReShade NR selection completed: {Game}; version={Version}", game.GameBiz.Value, version ?? "default");
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
         catch (Exception ex)

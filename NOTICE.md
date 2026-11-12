@@ -18,6 +18,11 @@ Full 版本还包含 HoYoShade 框架及 ReShade；其原有名称用于准确�
 对应许可证位于 `HoYoShade/LICENSE` 与 `HoYoShade/ReShade_LICENSE`，与启动器许可证分别保存。
 其它第三方组件的许可证保留在相应目录。
 
+随启动器提供的 F6ShadeInjector 基于 Patrick Mours 和 DuolaD 的 BSD-3-Clause
+注入器修改，修正残留进程导致的就绪死循环；不修改 ReShade 核心。
+其版权和许可保留在应用目录的 `F6ShadeInjector.LICENSE` 与
+`F6ShadeInjector.ReShade_LICENSE`。
+
 F6 Launcher 不使用 HoYoShade Hub 官方运营的私有镜像 API。
 下载默认直连；用户可选择界面列出的独立公共 GitHub 代理。
 不适用上游产品的用户协议、服务承诺或官方支持渠道。

@@ -2285,6 +2285,9 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
         // 一个可取消 / 可暂停的下载任务。进度显示仍用下面这个 progress（它还兼着写 item.StatusText）
         // 但取消令牌和暂停信号从这里来  之前没有它，所以下载根本停不下来。
         using var job = BeginDownloadJob($"\u6b63\u5728\u4e0b\u8f7d OptiScaler\uff08{tag}\uff09");
+        TextBlock_Status.Text = $"正在读取 OptiScaler（{tag}）的下载文件清单…";
+        _logger.LogInformation("OptiScaler download requested: {Repository} {Tag}, route={Route}",
+            item.Source.Repository, tag, PluginDownloadProxy.DescribeRoute());
 
         var progress = new Progress<DownloadProgress>(p =>
         {
@@ -2292,29 +2295,45 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
                 ? $"{p.BytesReceived / 1024d / 1024d:F1} MB"
                 : $"{p.Percent.Value:F0}%　{p.BytesReceived / 1024d / 1024d:F1} MB";
             TextBlock_Status.Text = $"正在下载 OptiScaler（{tag}）… {text}";
+            item.StatusText = TextBlock_Status.Text;
             ProgressBar_Overall.IsIndeterminate = p.Percent is null;
             ProgressBar_Overall.Value = p.Percent ?? 0;
         });
 
         try
         {
-            List<string> assets = await OptiDownloads.ListAssetsAsync(item.Source, tag);
+            OptiScalerDownloader.AssetChoices choices;
+            using (var lookup = CancellationTokenSource.CreateLinkedTokenSource(job.Token))
+            {
+                lookup.CancelAfter(TimeSpan.FromSeconds(20));
+                try { choices = await OptiDownloads.ListAssetChoicesAsync(item.Source, tag, lookup.Token).WaitAsync(lookup.Token); }
+                catch (OperationCanceledException) when (!job.Token.IsCancellationRequested)
+                { throw new TimeoutException("读取 GitHub 下载文件清单超时，请在设置中更换下载线路后重试。"); }
+            }
+            List<string> assets = choices.Names;
+            _logger.LogInformation("OptiScaler download assets: {Count}, patternMatched={Matched}", assets.Count, choices.PatternMatched);
 
             if (assets.Count == 0)
             {
                 item.StatusText = $"{tag} 里没有可下载的 .zip / .exe（7z 之类暂不支持）。";
+                TextBlock_Status.Text = item.StatusText;
                 return;
             }
 
-            string? asset = assets.Count == 1 ? assets[0] : await PickOptiScalerAssetAsync(item.Source, tag, assets);
+            string? asset = assets.Count == 1 && choices.PatternMatched ? assets[0]
+                : await PickOptiScalerAssetAsync(item.Source, tag, assets, !choices.PatternMatched);
+            job.Token.ThrowIfCancellationRequested();
             if (string.IsNullOrWhiteSpace(asset))
             {
                 item.StatusText = "已取消。";
+                TextBlock_Status.Text = item.StatusText;
                 return;
             }
 
             bool installer = OptiScalerDownloader.IsInstaller(asset);
             item.StatusText = installer ? $"正在下载安装程序 {asset}…" : $"正在下载 {asset}…";
+            TextBlock_Status.Text = item.StatusText + " 正在连接下载服务器…";
+            _logger.LogInformation("OptiScaler download selected asset: {Asset}", asset);
 
             OptiScalerLibrary library = OptiLib;
             string targetDirectory = library.DirectoryFor(item.Source.Id, tag);
@@ -2380,8 +2399,15 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
             _logger.LogInformation("OptiScaler MFG unlock dlssg: ok={Ok} - {Message}",
                 unlockDlssg.Ok, unlockDlssg.Message);
 
-            var nrLinkErrors = await Task.Run(() => NrRuntimeLibrary.Consolidate(AppConfig.CacheRoot,
-                _manager?.Host.AddonsPath, AppConfig.OptiScalerRootPath, AppConfig.CacheRoot));
+            TextBlock_Status.Text = item.StatusText = "正在整理本次安装的 NR 硬链接…";
+            var nrProgress = new Progress<NrRuntimeLibrary.ConsolidationProgress>(p =>
+            {
+                TextBlock_Status.Text = item.StatusText = $"正在整理 NR 硬链接（{p.Completed}/{p.Total}）…";
+                ProgressBar_Overall.IsIndeterminate = false;
+                ProgressBar_Overall.Value = p.Total == 0 ? 100 : 100d * p.Completed / p.Total;
+            });
+            var nrLinkErrors = await Task.Run(() => NrRuntimeLibrary.ConsolidateScoped(AppConfig.CacheRoot,
+                [build.Directory], nrProgress, job.Token), job.Token);
             if (nrLinkErrors.Count > 0) throw new IOException("NR 硬链接整理未完成：" + string.Join(Environment.NewLine, nrLinkErrors));
 
             finalStatus = installer
@@ -2423,6 +2449,15 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
 
             ApplyFilter();
         }
+        catch (OperationCanceledException) when (job.Token.IsCancellationRequested)
+        {
+            item.StatusText = TextBlock_Status.Text = "已取消下载。";
+        }
+        catch (Exception ex)
+        {
+            item.StatusText = "下载或安装失败：" + ex.Message;
+            throw;
+        }
         finally
         {
             if (job.IsCancellationRequested)
@@ -2460,7 +2495,7 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
     }
 
     /// <summary>一个 release 里有多个 zip 时，弹个下拉让用户选（名字里带 Patch 的会提示）。</summary>
-    private async Task<string?> PickOptiScalerAssetAsync(OptiScalerSource source, string tag, List<string> assets)
+    private async Task<string?> PickOptiScalerAssetAsync(OptiScalerSource source, string tag, List<string> assets, bool stalePattern = false)
     {
         var combo = new ComboBox
         {
@@ -2478,6 +2513,15 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
             TextWrapping = TextWrapping.Wrap,
         });
         panel.Children.Add(combo);
+
+        if (stalePattern)
+        {
+            panel.Children.Add(new TextBlock
+            {
+                Text = "目录里的文件名规则未匹配此版本。以下列出了实际发布的文件，请明确选择主包；Optional / Patch 通常是可选组件或补丁。",
+                TextWrapping = TextWrapping.Wrap,
+            });
+        }
 
         if (assets.Any(OptiScalerDownloader.LooksLikePatch))
         {
@@ -3424,7 +3468,7 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
 
                 // 包里的 GamePack（auto.json）已铺进各游戏包目录：动作确认现在就办，
                 // 确认后立即执行（一次性；启动前的 runOnLaunch 靠 once 记账自动跳过）。
-                // 没有 auto.json 的旧包这里直接返回空串，行为不变。
+                // 路径绑定在动作确认前完成；没有 auto.json 也会返回绑定结果。
                 PackImportActionResult packActions = result.GamePackReplaced
                     ? await OverlayPackActionPrompter.PromptAndRunAsync(
                         XamlRoot,
@@ -3477,6 +3521,7 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
 
     private async Task InstallLocalFileWithProgressAsync(LocalPackageInstaller installer, string file)
     {
+        var timer = Stopwatch.StartNew();
         bool acceptingProgress = true;
         var progress = new LocalInstallProgressReporter(p => DispatcherQueue.TryEnqueue(() =>
         {
@@ -3489,13 +3534,18 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
         {
             _logger.LogInformation("Local package installation starting: {Path}", file);
             LocalPackageInstallResult result = await installer.InstallAsync(file, progress: progress);
-            _logger.LogInformation("Local package files installed: {Path}; kind={Kind}; target={Target}", file, result.Kind, result.TargetPath);
+            _logger.LogInformation("Local package files installed: {Path}; kind={Kind}; target={Target}; installMs={InstallMs}",
+                file, result.Kind, result.TargetPath, timer.ElapsedMilliseconds);
             acceptingProgress = false;
             ProgressBar_Overall.IsIndeterminate = false;
             ProgressBar_Overall.Value = 92;
-            TextBlock_Status.Text = "文件安装完成，正在刷新插件与确认覆盖包动作…";
+            TextBlock_Status.Text = result.Kind == LocalPackageKind.Overlay
+                ? "文件安装完成，正在刷新插件与确认覆盖包动作…"
+                : "文件安装完成，正在刷新列表…";
             await ApplyLocalInstallResultAsync(result, file);
             ProgressBar_Overall.Value = 100;
+            _logger.LogInformation("Local package installation completed: {Path}; totalMs={TotalMs}",
+                file, timer.ElapsedMilliseconds);
         }
         finally { acceptingProgress = false; }
     }
@@ -4835,7 +4885,7 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
     private void ShowPackActionResult(PackImportActionResult result)
     {
         if (result.Summary.Length == 0) return;
-        ShowInfo(result.HasFailures ? "覆盖包动作未全部完成" : "覆盖包动作执行完成",
+        ShowInfo(result.HasFailures ? "覆盖包安装未全部完成" : "覆盖包安装完成",
             result.Summary, result.HasFailures ? InfoBarSeverity.Warning : InfoBarSeverity.Success);
     }
 

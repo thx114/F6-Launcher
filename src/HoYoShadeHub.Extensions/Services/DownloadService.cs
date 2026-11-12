@@ -68,10 +68,14 @@ public sealed class DownloadService
     private const int BufferSize = 81920;
 
     private readonly HttpClient _httpClient;
+    private readonly TimeSpan _headerTimeout;
+    private readonly TimeSpan _readTimeout;
 
-    public DownloadService(HttpClient? httpClient = null)
+    public DownloadService(HttpClient? httpClient = null, TimeSpan? headerTimeout = null, TimeSpan? readTimeout = null)
     {
         _httpClient = httpClient ?? HysxHttp.CreateClient();
+        _headerTimeout = headerTimeout ?? TimeSpan.FromSeconds(30);
+        _readTimeout = readTimeout ?? TimeSpan.FromSeconds(60);
     }
 
     /// <summary>Partial file next to the target, plus sidecar metadata.</summary>
@@ -195,8 +199,7 @@ public sealed class DownloadService
                 request.Headers.TryAddWithoutValidation("If-Range", knownETag);
             }
 
-            using HttpResponseMessage response = await _httpClient.SendAsync(
-                request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            using HttpResponseMessage response = await SendHeadersAsync(request, cancellationToken);
 
             if (response.StatusCode == HttpStatusCode.RequestedRangeNotSatisfiable)
             {
@@ -256,8 +259,8 @@ public sealed class DownloadService
         CancellationToken cancellationToken,
         DownloadPauseToken? pauseToken)
     {
-        using HttpResponseMessage response = await _httpClient.GetAsync(
-            appliedUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        using var request = new HttpRequestMessage(HttpMethod.Get, appliedUrl);
+        using HttpResponseMessage response = await SendHeadersAsync(request, cancellationToken);
         response.EnsureSuccessStatusCode();
         if (response.StatusCode != HttpStatusCode.OK)
             throw new InvalidDataException("A fresh download requires a complete HTTP 200 response.");
@@ -277,7 +280,16 @@ public sealed class DownloadService
         return received;
     }
 
-    private static async Task<long> PumpAsync(
+    private async Task<HttpResponseMessage> SendHeadersAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(_headerTimeout);
+        try { return await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token); }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && deadline.IsCancellationRequested)
+        { throw new TimeoutException("连接下载服务器超时，请更换下载线路后重试。"); }
+    }
+
+    private async Task<long> PumpAsync(
         Stream source,
         Stream destination,
         long received,
@@ -287,15 +299,20 @@ public sealed class DownloadService
         DownloadPauseToken? pauseToken)
     {
         byte[] buffer = new byte[BufferSize];
-        int read;
-
-        while ((read = await source.ReadAsync(buffer, cancellationToken)) > 0)
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        while (true)
         {
             if (pauseToken is not null)
             {
                 await pauseToken.WaitAsync(cancellationToken);
             }
-
+            int read;
+            deadline.CancelAfter(_readTimeout);
+            try { read = await source.ReadAsync(buffer, deadline.Token); }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && deadline.IsCancellationRequested)
+            { throw new TimeoutException("下载连接长时间没有收到数据，请重试或更换下载线路。"); }
+            finally { deadline.CancelAfter(Timeout.InfiniteTimeSpan); }
+            if (read == 0) break;
             await destination.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
             received += read;
             progress?.Report(new DownloadProgress(received, total));

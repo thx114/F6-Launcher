@@ -479,18 +479,48 @@ public static class Program
         };
 
         bool failed = false;
-        foreach (PackAutoAction action in actions)
+        ConsoleCancelEventHandler keepFpsOwner = (_, signal) =>
         {
-            CliPrint("== " + action.Name + " ==");
-            // CLI actions are explicit user commands, not actions loaded from a coverage pack.
-            // Pass the provenance explicitly; the once/consent policy must not treat an
-            // omitted value as a pack action and block launch before it reaches the pipeline.
-            string summary = LauncherActionRunner.RunAsync(action, context, isPackAction: false)
-                .ConfigureAwait(false).GetAwaiter().GetResult();
-            CliPrint(summary);
-            if (summary.Contains('✗'))
+            if (GameLaunchPipeline.HasActiveFpsSessions || FpsUnlocker.HasPendingRetirements)
+            {
+                signal.Cancel = true;
+                CliPrint("帧率解锁仍持有该游戏会话；请正常退出游戏后结束 CLI。", error: true);
+            }
+        };
+        Console.CancelKeyPress += keepFpsOwner;
+        try
+        {
+            foreach (PackAutoAction action in actions)
+            {
+                CliPrint("== " + action.Name + " ==");
+                // CLI commands carry their own consent; they are not coverage-pack actions.
+                string summary = LauncherActionRunner.RunAsync(action, context, isPackAction: false)
+                    .ConfigureAwait(false).GetAwaiter().GetResult();
+                CliPrint(summary);
+                if (summary.Contains('✗')) failed = true;
+            }
+        }
+        finally
+        {
+            // Returning Main would destroy the FPS target slot even when a remote reader remains alive.
+            // Drain after the batch so launch/wait/stop retains its existing sequential meaning.
+            try
+            {
+                if (GameLaunchPipeline.HasActiveFpsSessions)
+                    CliPrint("保持帧率解锁会话，等待对应游戏进程退出…");
+                GameLaunchPipeline.WaitForFpsSessionsAsync().ConfigureAwait(false).GetAwaiter().GetResult();
+            }
+            catch (Exception ex)
             {
                 failed = true;
+                Serilog.Log.Error(ex, "CLI FPS session failed");
+                CliPrint("帧率解锁会话异常：" + ex.Message, error: true);
+            }
+            finally
+            {
+                // Failed/partial attachment may also have transferred live remote resources to retirement.
+                FpsUnlocker.DrainRetirementsAsync().ConfigureAwait(false).GetAwaiter().GetResult();
+                Console.CancelKeyPress -= keepFpsOwner;
             }
         }
 
@@ -558,13 +588,20 @@ public static class Program
     /// <summary>控制台输出一份、接力文件写一份（提权副本的双通道输出）。</summary>
     private static void CliPrint(string line, bool error = false)
     {
-        if (error)
+        try
         {
-            Console.Error.WriteLine(line);
+            if (error)
+            {
+                Console.Error.WriteLine(line);
+            }
+            else
+            {
+                Console.WriteLine(line);
+            }
         }
-        else
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException)
         {
-            Console.WriteLine(line);
+            // A closed output pipe must not bypass the FPS owner's exit drain.
         }
 
         string? relay = _relayFile;

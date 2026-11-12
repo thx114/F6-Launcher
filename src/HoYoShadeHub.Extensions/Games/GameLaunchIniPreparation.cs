@@ -5,10 +5,21 @@ namespace HoYoShadeHub.Extensions.Games;
 
 public static class GameLaunchIniPreparation
 {
-    // Only supply a missing target. Existing INI values remain for the package's own actions to replace.
-    public static void EnsurePackActionTarget(GameEntry? entry, ShadeHost? host, IEnumerable<PackAutoAction> actions)
+    /// <summary>First launch and existing installs share one seed → package → bootstrap pass.</summary>
+    public static GameIniBootstrapResult PrepareForLaunch(GameEntry entry, ShadeHost? host,
+        Action syncPackage, Func<(bool GenshinFinalDx12, bool StarRailFinalDx12)> resolveRoute)
     {
-        bool needsReShade = actions.SelectMany(action => action.Steps).Any(step =>
+        EnsureReShadeTarget(entry, host);
+        syncPackage();
+        var route = resolveRoute();
+        return GameIniBootstrap.Ensure(entry, host, route.GenshinFinalDx12, route.StarRailFinalDx12);
+    }
+
+    // Only supply a missing target. Existing INI values remain for the package's own actions to replace.
+    public static void EnsurePackActionTarget(GameEntry? entry, ShadeHost? host, IEnumerable<PackAutoAction> actions,
+        Func<PackAutoAction, int, bool>? isStepEnabled = null)
+    {
+        bool needsReShade = actions.SelectMany(action => action.Steps.Where((_, index) => isStepEnabled?.Invoke(action, index) ?? true)).Any(step =>
             step.Action.Trim().ToLowerInvariant() is "set_addons" or "set_addon" or "apply_preset"
             || (PackIniAction.IsIniAction(step) && PackIniAction.UsesReShadeIni(step)));
         if (!needsReShade) return;

@@ -68,6 +68,14 @@ public static class DllFingerprintCatalog
         && f.Sha256.Equals(hash, StringComparison.OrdinalIgnoreCase));
 
     public static void ValidateKnownFile(string family, string version, string path, string? fileName = null)
+        => ValidateKnownFileCore(family, version, path, null, fileName);
+
+    // Only for callers that have just hashed these bytes in the same operation.
+    // Do not persist this digest or substitute file size/time for content validation.
+    internal static void ValidateKnownHash(string family, string version, string path, string hash, string? fileName = null)
+        => ValidateKnownFileCore(family, version, path, hash, fileName);
+
+    private static void ValidateKnownFileCore(string family, string version, string path, string? hash, string? fileName)
     {
         fileName ??= Path.GetFileName(path);
         var expected = Fingerprints.Where(f => f.Family.Equals(family, StringComparison.OrdinalIgnoreCase)
@@ -75,7 +83,7 @@ public static class DllFingerprintCatalog
             && f.FileName.Equals(fileName, StringComparison.OrdinalIgnoreCase)).ToArray();
         if (expected.Length == 0) return;
         long size = new FileInfo(path).Length;
-        string hash = NrRuntimeLibrary.Hash(path);
+        hash ??= NrRuntimeLibrary.Hash(path);
         var match = expected.FirstOrDefault(f => f.Size == size && f.Sha256.Equals(hash, StringComparison.OrdinalIgnoreCase));
         if (match is null) throw new InvalidDataException("DLL 内容与云端版本指纹不符：" + version);
         if (!ValidatePe(path, match, out string error)) throw new InvalidDataException("DLL PE 验证失败：" + error);

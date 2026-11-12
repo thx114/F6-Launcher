@@ -62,11 +62,18 @@ function Clear-PreviousPackages {
     foreach ($candidate in $candidates | Sort-Object FullName -Unique) {
         if ($PreserveOutput -and ([IO.Path]::GetFullPath($PreserveOutput)).StartsWith($candidate.FullName.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) { continue }
         if ($PreserveOutput -and $candidate.FullName.Equals([IO.Path]::GetFullPath($PreserveOutput), [StringComparison]::OrdinalIgnoreCase)) { continue }
+        $skipCandidate = $false
         foreach ($protected in $ProtectedPaths) {
-            if (([IO.Path]::GetFullPath($protected)).StartsWith($candidate.FullName.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase) -or $candidate.FullName.Equals([IO.Path]::GetFullPath($protected), [StringComparison]::OrdinalIgnoreCase)) {
+            $protectedFull = [IO.Path]::GetFullPath($protected).TrimEnd('\', '/')
+            if ($candidate.FullName.Equals($protectedFull, [StringComparison]::OrdinalIgnoreCase)) {
+                $skipCandidate = $true
+                break
+            }
+            if ($protectedFull.StartsWith($candidate.FullName.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) {
                 throw "打包源位于待清理目录内：$protected"
             }
         }
+        if ($skipCandidate) { continue }
         Remove-PackageArtifact -LiteralPath $candidate.FullName -AllowedRoot ([IO.Path]::GetDirectoryName($candidate.FullName)) -Records $Records -CleanupRoot $CleanupRoot
     }
 }

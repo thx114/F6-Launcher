@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 using HoYoShadeHub.Core;
 using HoYoShadeHub.Core.HoYoPlay;
 using HoYoShadeHub.Extensions.Games;
+using HoYoShadeHub.Extensions.Models;
 using HoYoShadeHub.Features.GameSetting;
 using HoYoShadeHub.Features.HoYoPlay;
 using HoYoShadeHub.Features.PlayTime;
@@ -324,29 +325,9 @@ internal partial class GameLauncherService
     /// <returns></returns>
     public async Task<Process?> GetGameProcessAsync(GameId gameId)
     {
-        int currentSessionId = Process.GetCurrentProcess().SessionId;
-        var name = (await GetGameExeNameAsync(gameId)).Replace(".exe", "");
-
-        // 已退出的进程必须排除：Hub 自己握着句柄（GameProcess、会话日志挂的 Exited 钩子）时，
-        // 进程对象在退出后仍会出现在 GetProcessesByName 里，而 IsProcessPending 对已退出的进程
-        // 返回 false（"不挂起"）—— 于是刚退出的游戏被反复"发现"：退出回写一遍遍重跑、
-        // 会话日志还给同一个 pid 再开一局（实测 2026-10-10 日志：profile stored 连刷 5 次 + 重复会话目录）。
-        return Process.GetProcessesByName(name)
-            .Where(x => !HasExited(x) && x.SessionId == currentSessionId && !IsProcessPending(x))
-            .FirstOrDefault();
-    }
-
-    /// <summary>进程是否已退出。拿不到状态也算退出 —— 宁可不认它，也别把死进程当成游戏在跑。</summary>
-    private static bool HasExited(Process process)
-    {
-        try
-        {
-            return process.HasExited;
-        }
-        catch
-        {
-            return true;
-        }
+        // Suspended games are still alive: both the launch guard and UI must see
+        // them, instead of blocking startup without exposing the close action.
+        return GameProcessDiscovery.FindRunning(await GetGameExeNameAsync(gameId));
     }
 
     /// <summary>等游戏进程出现（用启动器/CMD 拉游戏时，真实进程会晚几秒），超时返回 null</summary>
@@ -413,16 +394,14 @@ internal partial class GameLauncherService
     }
 
     internal async Task<Process?> StartReservedGameAsync(GameId gameId, GameLaunchReservation reservation,
-        string? installPath = null, CancellationToken cancellationToken = default)
+        string? installPath = null, CancellationToken cancellationToken = default, bool configurationPrepared = false)
     {
         reservation.Validate(gameId.GameBiz.ToString(), cancellationToken);
         const int ERROR_CANCELLED = 0x000004C7;
         try
         {
-            if (await GetGameProcessAsync(gameId) is Process existingProcess)
-            {
-                throw new Exception($"Game is running: {existingProcess.ProcessName}.exe ({existingProcess.Id}).");
-            }
+            string targetProcessName = await GetGameExeNameAsync(gameId);
+            GameLaunchGuard.EnsureCanStart(targetProcessName);
             if (AppConfig.GetUseRocketLaunchOption(gameId))
             {
                 var prepared = await RocketLaunchPreparation.PrepareAsync(gameId, null);
@@ -430,7 +409,11 @@ internal partial class GameLauncherService
                 _logger.LogInformation("{Status}", prepared.Message);
                 return null;
             }
-            EnsureGameIniReady(gameId);
+            // The shader route prepares configuration before arming its injector.
+            // Other callers still prepare here, away from the UI thread.
+            if (!configurationPrepared)
+                await Task.Run(() => EnsureGameIniReady(gameId), cancellationToken);
+            reservation.Validate(gameId.GameBiz.ToString(), cancellationToken);
             string? exe = null, arg = null, verb = null;
             if (Directory.Exists(installPath))
             {
@@ -504,7 +487,7 @@ internal partial class GameLauncherService
                 info.WindowStyle = ProcessWindowStyle.Hidden;
             }
             reservation.Validate(gameId.GameBiz.ToString(), cancellationToken);
-            Process? process = Process.Start(info);
+            Process? process = GameLaunchGuard.Start(targetProcessName, () => Process.Start(info));
             if (process != null)
             {
                 if (thirdPartyTool || AppConfig.StartGameWithCMD)
@@ -546,50 +529,36 @@ internal partial class GameLauncherService
         && !AppConfig.GetEnableDX12(gameId.GameBiz)
         && AppConfig.GetUseOptiScalerLaunchOption(gameId);
 
-    internal void EnsureGameIniReady(GameId gameId)
+    internal bool EnsureGameIniReady(GameId gameId, GameEntry? entry = null, ShadeHost? host = null)
     {
+        var timing = Stopwatch.StartNew();
+        double discoverMs = 0, packMs = 0, bootstrapMs = 0;
         try
         {
-            var discovery = GameCatalog.CreateService();
-            GameEntry? entry = GameCatalog.GetOrCreate(discovery, gameId);
+            entry ??= GameCatalog.GetOrCreate(GameCatalog.CreateService(), gameId);
             if (entry?.ReShadeIniPath is null)
             {
-                return;
+                return false;
             }
 
-            var host = PluginHostLocator.Resolve(out _);
+            host ??= PluginHostLocator.Resolve(out _);
+            discoverMs = timing.Elapsed.TotalMilliseconds;
 
-            // Sync before bootstrap so an existing per-game package is already
-            // recognizable when GameIniBootstrap inspects AddonPath.  Sync again
-            // afterwards for the first-launch case: bootstrap may have just
-            // created ReShade.ini from the host template, leaving no ini for the
-            // first sync to update.
-            try
+            // Seed a missing INI before syncing, so first launch and existing
+            // installs use the same single sync/bootstrap sequence.
+            bool packSynced = true;
+            GameIniBootstrapResult result = GameLaunchIniPreparation.PrepareForLaunch(entry, host, () =>
             {
-                GameAddonPackService.Sync(gameId, entry, host);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Sync game AddonPath package before bootstrap for {Game}", gameId);
-            }
-
-            GameIniBootstrapResult result = GameIniBootstrap.Ensure(entry, host, UsesGenshinFinalDx12(gameId), UsesStarRailFinalDx12(gameId));
-
-            try
-            {
-                GameAddonPackService.Sync(gameId, entry, host);
-                // 最后一次包同步可能改变 AddonPath，最终 runtime 在此收尾。
-                if (UsesGenshinFinalDx12(gameId) || UsesStarRailFinalDx12(gameId))
+                try { GameAddonPackService.Sync(gameId, entry, host); }
+                catch (Exception ex)
                 {
-                    var finalResult = GameIniBootstrap.Ensure(entry, host, UsesGenshinFinalDx12(gameId), UsesStarRailFinalDx12(gameId));
-                    if (finalResult.Failed)
-                        _logger.LogWarning("Final DX12 ini bootstrap failed for {Game}", gameId);
+                    packSynced = false;
+                    _logger.LogWarning(ex, "Sync game AddonPath package before bootstrap for {Game}", gameId);
                 }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Sync game AddonPath package after bootstrap for {Game}", gameId);
-            }
+                packMs = timing.Elapsed.TotalMilliseconds - discoverMs;
+            }, () => (UsesGenshinFinalDx12(gameId), UsesStarRailFinalDx12(gameId)));
+            ReShadeLauncherSettings.Apply(gameId, entry.ReShadeIniPath);
+            bootstrapMs = timing.Elapsed.TotalMilliseconds - discoverMs - packMs;
 
             if (result.Failed)
             {
@@ -602,10 +571,17 @@ internal partial class GameLauncherService
                     gameId, result.CreatedFromTemplate, result.TutorialMarkedDone, result.CreatedSecondary,
                     result.Aligned, result.RepairedHotkeys, string.Join(", ", result.AlignKeys));
             }
+            return packSynced && !result.Failed;
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Bootstrap game ReShade.ini for {Game}", gameId);
+            return false;
+        }
+        finally
+        {
+            _logger.LogInformation("Launch configuration {Game}: discoverMs={DiscoverMs:F1}, packMs={PackMs:F1}, bootstrapMs={BootstrapMs:F1}, totalMs={TotalMs:F1}",
+                gameId.GameBiz, discoverMs, packMs, bootstrapMs, timing.Elapsed.TotalMilliseconds);
         }
     }
 

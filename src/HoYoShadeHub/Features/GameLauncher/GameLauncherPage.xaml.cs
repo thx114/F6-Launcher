@@ -1324,14 +1324,29 @@ public sealed partial class GameLauncherPage : PageBase
         }
 
         IsClosingGame = true;
+        var gameId = SnapshotGameId();
+        long generation = PageGeneration;
+        Process? game = null;
+        bool exited = false;
         try
         {
-            Process? game = GameProcess is { HasExited: false } tracked
-                ? tracked
-                : await _gameLauncherService.GetGameProcessAsync(CurrentGameId);
-
-            if (game is null || game.HasExited)
+            using var current = Process.GetCurrentProcess();
+            game = GameProcess;
+            if (game is null || !GameProcessDiscovery.IsRunning(game, current.SessionId))
             {
+                string? targetName = await ResolveTargetProcessNameAsync();
+                game = string.IsNullOrWhiteSpace(targetName) ? null : GameProcessDiscovery.FindBlocking(targetName)?.Process;
+            }
+
+            if (!IsPageGenerationCurrent(generation) || CurrentGameId != gameId)
+            {
+                if (!ReferenceEquals(GameProcess, game)) game?.Dispose();
+                return;
+            }
+
+            if (game is null || !GameProcessDiscovery.IsRunning(game, current.SessionId))
+            {
+                exited = true;
                 InAppToast.MainWindow?.Information("关闭游戏", "游戏已经不在运行了。", 5000);
             }
             else
@@ -1340,7 +1355,7 @@ public sealed partial class GameLauncherPage : PageBase
                 bool killed = false;
                 try
                 {
-                    game.Kill(entireProcessTree: true);
+                    game.Kill();
                     killed = true;
                 }
                 catch (Exception ex)
@@ -1356,7 +1371,9 @@ public sealed partial class GameLauncherPage : PageBase
                 {
                     try
                     {
-                        await game.WaitForExitAsync(new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(10)).Token);
+                        using var timeout = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(10));
+                        await game.WaitForExitAsync(timeout.Token);
+                        exited = true;
                         InAppToast.MainWindow?.Success("关闭游戏", $"已关闭 {name}。", 5000);
                     }
                     catch (OperationCanceledException)
@@ -1373,14 +1390,27 @@ public sealed partial class GameLauncherPage : PageBase
         }
         finally
         {
-            GameProcess = null;
-            StopFpsUnlocker();
-            // 背景回来 —— 和游戏自然退出同一信号
-            WeakReferenceMessenger.Default.Send(new GameExitedMessage());
-            GameState = GameState.StartGame;
             IsClosingGame = false;
-            // 让 CheckGameVersion 把状态再算一遍（安装/更新提示照常给出）
-            DispatcherQueue.TryEnqueue(CheckGameVersion);
+            if (IsPageGenerationCurrent(generation) && CurrentGameId == gameId)
+            {
+                if (exited)
+                {
+                    if (game is not null && ReferenceEquals(GameProcess, game))
+                        StoreCurrentOptiScalerProfileOnExit("close-game");
+                    GameProcess = null;
+                    StopFpsUnlocker();
+                    WeakReferenceMessenger.Default.Send(new GameExitedMessage());
+                    GameState = GameState.StartGame;
+                    DispatcherQueue.TryEnqueue(CheckGameVersion);
+                }
+                else if (game is not null)
+                {
+                    // Permission failures/timeouts must not hide the close button or
+                    // stop the FPS owner while the game may still be running.
+                    GameProcess = game;
+                    GameState = GameState.GameIsRunning;
+                }
+            }
         }
     }
 

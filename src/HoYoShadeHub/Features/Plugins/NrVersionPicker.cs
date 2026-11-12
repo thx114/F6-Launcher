@@ -1,6 +1,8 @@
 using HoYoShadeHub.Extensions.Dlls;
 using HoYoShadeHub.Extensions.Services;
 using HoYoShadeHub.Extensions.Models;
+using Microsoft.Extensions.Logging;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using System;
@@ -17,9 +19,14 @@ internal static class NrVersionPicker
 {
     private sealed class FillState
     {
-        public long Revision;
+        public readonly DeferredPickerUpdate<Snapshot> Updates = new();
         public Task<List<string>>? Pending;
+        public bool Attached;
+        public bool DispatchQueued;
     }
+    private sealed record Snapshot(string? Selected, IReadOnlyList<string> Versions);
+    private static readonly ILogger Logger = AppConfig.GetLogger<PickerLogToken>();
+    private sealed class PickerLogToken { }
     private static readonly ConditionalWeakTable<ComboBox, FillState> FillStates = new();
     private static FillState For(ComboBox combo) => FillStates.GetValue(combo, static _ => new FillState());
 
@@ -38,22 +45,19 @@ internal static class NrVersionPicker
     public static async void Fill(ComboBox combo, string? selected)
     {
         var state = For(combo);
-        long revision = ++state.Revision;
-        combo.SelectionChanged -= InvalidateFill;
-        combo.SelectionChanged += InvalidateFill;
-        combo.Unloaded -= InvalidateFillOnUnload;
-        combo.Unloaded += InvalidateFillOnUnload;
+        Attach(combo, state);
+        long revision = state.Updates.Begin();
         var pending = state.Pending ??= NrRuntimeWorkQueue.RunAsync(ReadVersions);
         try
         {
             var versions = await pending;
-            if (revision != state.Revision || !combo.IsLoaded || combo.XamlRoot is null) return;
-            ApplyVersions(combo, selected, versions);
+            if (!combo.IsLoaded || combo.XamlRoot is null) return;
+            if (state.Updates.Complete(revision, new(selected, versions))) QueueApply(combo, state);
         }
         catch (Exception ex)
         {
             // async void 事件适配器不能把磁盘/已卸载控件异常传播到 dispatcher。
-            System.Diagnostics.Debug.WriteLine("NR picker refresh: " + ex.Message);
+            Logger.LogWarning(ex, "NR picker version discovery failed");
         }
         finally { if (ReferenceEquals(state.Pending, pending)) state.Pending = null; }
     }
@@ -63,41 +67,99 @@ internal static class NrVersionPicker
             .Where(v => File.Exists(Path.Combine(v.Directory, NrRuntimeLibrary.FileName)))
             .Select(v => v.Version), AppConfig.IsNrVersionEnabled).ToList();
 
-    private static void ApplyVersions(ComboBox combo, string? selected, List<string> versions)
+    // Opt's page already owns a background version snapshot; share only the safe UI binding.
+    public static void SetVersions(ComboBox combo, string? selected, IReadOnlyList<string> versions)
     {
+        var state = For(combo);
+        Attach(combo, state);
+        long revision = state.Updates.Begin();
+        state.Updates.Complete(revision, new(selected, versions.ToArray()));
+        QueueApply(combo, state);
+    }
+
+    private static void Attach(ComboBox combo, FillState state)
+    {
+        if (state.Attached) return;
+        state.Attached = true;
+        combo.SelectionChanged += InvalidateFill;
+        combo.Unloaded += InvalidateFillOnUnload;
+        combo.DropDownClosed += OnDropDownClosed;
+    }
+
+    private static void QueueApply(ComboBox combo, FillState state)
+    {
+        if (state.DispatchQueued) return;
+        state.DispatchQueued = true;
+        if (!combo.DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, () =>
+        {
+            state.DispatchQueued = false;
+            try
+            {
+                if (!combo.IsLoaded || combo.XamlRoot is null) { state.Updates.Invalidate(); return; }
+                // DropDownOpened can finish its disk read while WinUI is handling an item click.
+                // Never clear/replace that popup's containers; Closed schedules another turn.
+                if (state.Updates.TryTake(combo.IsDropDownOpen, out var snapshot))
+                    ApplyVersions(combo, snapshot!.Selected, snapshot.Versions);
+            }
+            catch (Exception ex) { Logger.LogWarning(ex, "NR picker snapshot binding failed"); }
+        })) state.DispatchQueued = false;
+    }
+
+    private static void OnDropDownClosed(object sender, object e)
+    {
+        if (sender is ComboBox combo) QueueApply(combo, For(combo));
+    }
+
+    /// <summary>Exit WinUI's item-selection callback before changing availability or starting IO.</summary>
+    public static async Task CloseForSelectionAsync(ComboBox combo, CancellationToken cancellationToken)
+    {
+        var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var registration = cancellationToken.Register(() => completion.TrySetCanceled(cancellationToken));
+        if (!combo.DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, () =>
+        {
+            if (completion.Task.IsCompleted) return;
+            try
+            {
+                if (!combo.IsLoaded || combo.XamlRoot is null) { completion.TrySetCanceled(); return; }
+                combo.IsDropDownOpen = false;
+                completion.TrySetResult(true);
+            }
+            catch (Exception ex) { completion.TrySetException(ex); }
+        })) completion.TrySetCanceled();
+        await completion.Task;
+    }
+
+    private static void ApplyVersions(ComboBox combo, string? selected, IReadOnlyList<string> versions)
+    {
+        var items = new List<ComboBoxItem> { new() { Content = "NR：默认" } };
+        foreach (var version in versions) items.Add(new ComboBoxItem { Content = "NR：" + version, Tag = version });
+        int index = selected is null ? 0 : items.FindIndex(item => string.Equals(item.Tag as string, selected, StringComparison.OrdinalIgnoreCase));
+        if (index < 0)
+        {
+            items.Add(new ComboBoxItem { Content = "NR：" + selected + "（不可选）", Tag = selected, IsEnabled = false });
+            index = items.Count - 1;
+        }
+        bool sameItems = combo.Items.Count == items.Count && combo.Items.OfType<ComboBoxItem>().Zip(items)
+            .All(pair => Equals(pair.First.Content, pair.Second.Content)
+                && Equals(pair.First.Tag, pair.Second.Tag) && pair.First.IsEnabled == pair.Second.IsEnabled);
+        if (sameItems && combo.SelectedIndex == index) return;
         combo.Tag = true;
         try
         {
-            combo.Items.Clear();
-            combo.Items.Add(new ComboBoxItem { Content = "NR：默认" });
-            foreach (var version in versions) combo.Items.Add(new ComboBoxItem { Content = "NR：" + version, Tag = version });
-            int index = selected is null ? 0 : versions.FindIndex(v => v.Equals(selected, StringComparison.OrdinalIgnoreCase)) + 1;
-            if (selected is not null && index == 0)
-            {
-                combo.Items.Add(new ComboBoxItem { Content = "NR：" + selected + "（不可选）", Tag = selected, IsEnabled = false });
-                index = combo.Items.Count - 1;
-            }
+            if (!sameItems) combo.ItemsSource = items;
             combo.SelectedIndex = index;
         }
-        finally
-        {
-            combo.Tag = false;
-            // 同一控件排队的较早 Fill 结果，以及用户在等待期间改选后的旧结果，都不能回写。
-            combo.SelectionChanged -= InvalidateFill;
-            combo.SelectionChanged += InvalidateFill;
-            combo.Unloaded -= InvalidateFillOnUnload;
-            combo.Unloaded += InvalidateFillOnUnload;
-        }
+        finally { combo.Tag = false; }
     }
 
     private static void InvalidateFill(object sender, SelectionChangedEventArgs e)
     {
-        if (sender is ComboBox { Tag: false } combo) For(combo).Revision++;
+        if (sender is ComboBox { Tag: false } combo) For(combo).Updates.Invalidate();
     }
 
     private static void InvalidateFillOnUnload(object sender, RoutedEventArgs e)
     {
-        if (sender is ComboBox combo) For(combo).Revision++;
+        if (sender is ComboBox combo) For(combo).Updates.Invalidate();
     }
 
     public static async Task<(bool Apply, string? Version)> ShowAsync(XamlRoot root, string? selected, string? currentPath)

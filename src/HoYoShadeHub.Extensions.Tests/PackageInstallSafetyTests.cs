@@ -11,6 +11,7 @@ internal static class PackageInstallSafetyTests
         Directory.CreateDirectory(root);
         try
         {
+            await LocalAddonInstallProgressTests.RunAsync(root);
             foreach (string game in new[] { "../..", "..\\..", "C:\\outside", "hk4e/child", ".", "" })
                 Reject(() => new OverlayManifest { Schema = 1, Game = game }.ValidatePaths(root));
             Reject(() => new OverlayManifest

@@ -60,6 +60,9 @@ public sealed partial class GameLauncherPage : PageBase
     /// <summary>「关闭游戏」进行中（防连点，控件侧禁用关闭按钮）</summary>
     [ObservableProperty]
     public partial bool IsClosingGame { get; set; }
+
+    [ObservableProperty]
+    public partial bool IsGameProcessUnverified { get; set; }
     partial void OnGameProcessChanged(Process? oldValue, Process? newValue)
     {
         processTimer?.Stop();
@@ -74,11 +77,17 @@ public sealed partial class GameLauncherPage : PageBase
         if (newValue != null)
         {
             processTimer?.Start();
-            RunningGameInfo = $"{newValue.ProcessName}.exe ({newValue.Id})";
-            RunningGameService.AddRuninngGame(CurrentGameBiz, newValue);
+            using var current = Process.GetCurrentProcess();
+            var inspection = GameProcessDiscovery.Inspect(newValue, current.SessionId);
+            IsGameProcessUnverified = inspection.Status == GameProcessStatus.Unknown;
+            RunningGameInfo = $"{newValue.ProcessName}.exe ({newValue.Id})"
+                + (IsGameProcessUnverified ? "，状态无法确认：" + inspection.Detail : "");
+            if (inspection.Status == GameProcessStatus.Running)
+                RunningGameService.AddRuninngGame(CurrentGameBiz, newValue);
         }
         else
         {
+            IsGameProcessUnverified = false;
             RunningGameInfo = null;
             _logger.LogInformation("Game process exited");
         }
@@ -270,7 +279,10 @@ public sealed partial class GameLauncherPage : PageBase
         if (!IsPageRequestCurrent(_runningRequests, request, gameId)) return false;
         try
         {
-            var detectedProcess = await _gameLauncherService.GetGameProcessAsync(gameId);
+            string? targetName = await ResolveTargetProcessNameAsync();
+            if (string.IsNullOrWhiteSpace(targetName)) return false;
+            var match = GameProcessDiscovery.FindBlocking(targetName);
+            var detectedProcess = match?.Process;
             if (!IsPageRequestCurrent(_runningRequests, request, gameId))
             {
                 detectedProcess?.Dispose();
@@ -281,6 +293,12 @@ public sealed partial class GameLauncherPage : PageBase
             {
                 IsRocketMode = false;
                 GameState = GameState.GameIsRunning;
+                if (match!.Inspection.Status == GameProcessStatus.Unknown)
+                {
+                    _logger.LogWarning("Game process state unverified; launch blocked ({name}, {pid}, {detail})",
+                        GameProcess.ProcessName, GameProcess.Id, match.Inspection.Detail);
+                    return true;
+                }
                 _logger.LogInformation("Game is running ({name}, {pid})", GameProcess.ProcessName, GameProcess.Id);
 
                 // 这一局是外部启动器（火箭 / 官方启动器 / 命令行）起的：Hub 没参与启动，
@@ -294,7 +312,7 @@ public sealed partial class GameLauncherPage : PageBase
                 return true;
             }
         }
-        catch { }
+        catch (Exception ex) { _logger.LogWarning(ex, "Refresh game process state"); }
         return false;
     }
 
@@ -414,7 +432,9 @@ public sealed partial class GameLauncherPage : PageBase
         {
             if (GameProcess != null)
             {
-                if (GameProcess.HasExited)
+                using var current = Process.GetCurrentProcess();
+                var inspection = GameProcessDiscovery.Inspect(GameProcess, current.SessionId);
+                if (!inspection.BlocksLaunch)
                 {
                     StoreCurrentOptiScalerProfileOnExit("process-poll");
                     GameProcess = null;
@@ -422,6 +442,15 @@ public sealed partial class GameLauncherPage : PageBase
                     // 游戏没了：让背景（含视频）回来
                     WeakReferenceMessenger.Default.Send(new GameExitedMessage());
                     CheckGameVersion();
+                }
+                else if (IsGameProcessUnverified && inspection.Status == GameProcessStatus.Running)
+                {
+                    _ = CheckGameRunningAsync();
+                }
+                else if (!IsGameProcessUnverified && inspection.Status == GameProcessStatus.Unknown)
+                {
+                    IsGameProcessUnverified = true;
+                    RunningGameInfo = $"{GameProcess.ProcessName}.exe ({GameProcess.Id})，状态无法确认：{inspection.Detail}";
                 }
             }
         }
@@ -567,32 +596,6 @@ public sealed partial class GameLauncherPage : PageBase
         // 鸣潮：注册 exe 是启动器壳（Wuthering Waves.exe），要注/等的是它拉起的 Client-Win64-Shipping
         return ShadeBlacklistBypass.RemapInjectProcessName(_currentGameEntry, processName);
     }
-
-    /// <summary>
-    /// 这个游戏的进程当前是否在本会话运行。进程名按游戏条目 → 游戏库 → 内置表解析。
-    /// </summary>
-    private async Task<bool> IsTargetGameRunningAsync()
-    {
-        string? processName = await ResolveTargetProcessNameAsync();
-        if (string.IsNullOrWhiteSpace(processName))
-        {
-            return false;
-        }
-
-        string name = Path.GetFileNameWithoutExtension(processName);
-
-        try
-        {
-            int currentSessionId = Process.GetCurrentProcess().SessionId;
-            return Process.GetProcessesByName(name)
-                .Any(p => p.SessionId == currentSessionId);
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
 
 
     /// <summary>
@@ -1510,8 +1513,7 @@ public sealed partial class GameLauncherPage : PageBase
     {
         try
         {
-            string name = Path.GetFileNameWithoutExtension(processName);
-            return string.IsNullOrWhiteSpace(name) ? null : Process.GetProcessesByName(name).FirstOrDefault();
+            return GameProcessDiscovery.FindRunning(processName);
         }
         catch
         {
@@ -1901,9 +1903,9 @@ public sealed partial class GameLauncherPage : PageBase
                 return true;
             }
 
-            HashSet<string> disabled = PackActionConsent.DisabledActions(gameId.GameBiz.Value, consentHash);
+            PackStepSelection selection = PackActionConsent.Selection(gameId.GameBiz.Value, consentHash);
             List<PackAutoAction> actions = [.. snapshot.LoadActions()
-                .Where(a => a.RunOnLaunch && !disabled.Contains(a.Name))];
+                .Where(a => a.RunOnLaunch && selection.HasEnabledSteps(a))];
             if (actions.Count == 0)
             {
                 return true;
@@ -1911,7 +1913,7 @@ public sealed partial class GameLauncherPage : PageBase
 
             GameEntry? capturedEntry = _currentGameEntry;
             ShadeHost? host = PluginHostLocator.Resolve(out _);
-            GameLaunchIniPreparation.EnsurePackActionTarget(capturedEntry, host, actions);
+            GameLaunchIniPreparation.EnsurePackActionTarget(capturedEntry, host, actions, selection.IsEnabled);
             GamePluginService? plugins = null;
             if (capturedEntry is not null)
             {
@@ -2019,8 +2021,8 @@ public sealed partial class GameLauncherPage : PageBase
         return _pageLaunchReservation;
     }
 
-    private Task<Process?> StartReservedCurrentGameAsync(GameId gameId, string? installPath = null) =>
-        _gameLauncherService.StartReservedGameAsync(gameId, ValidatePageLaunch(), installPath, _pageLaunchCts!.Token);
+    private Task<Process?> StartReservedCurrentGameAsync(GameId gameId, string? installPath = null, bool configurationPrepared = false) =>
+        _gameLauncherService.StartReservedGameAsync(gameId, ValidatePageLaunch(), installPath, _pageLaunchCts!.Token, configurationPrepared);
 
     private async Task StartGameAsync()
     {
@@ -2032,13 +2034,26 @@ public sealed partial class GameLauncherPage : PageBase
             if (_pageLaunchReservation is not null)
                 throw new InvalidOperationException("Game launch already in progress on this page.");
             if (SnapshotGameId() is not { } gameId) return;
-            if (UseOptiScaler) GameNrRuntimeService.PrepareOpti(gameId);
+            if (!UseInjectMode && !UseRocket)
+                GameLaunchGuard.EnsureCanStart(await ResolveTargetProcessNameAsync()
+                    ?? throw new InvalidOperationException("无法确认游戏进程名，已停止启动。"));
             reservation = GameLaunchReservation.Acquire(gameId.GameBiz.ToString(), cancellation.Token);
             _pageLaunchReservation = reservation;
             _pageLaunchCts = cancellation;
+            if (UseOptiScaler)
+            {
+                var nrTiming = Stopwatch.StartNew();
+                await GameNrRuntimeService.PrepareOptiAsync(gameId, cancellation.Token);
+                ValidatePageLaunch();
+                _logger.LogInformation("Launch OptiScaler preparation {Game}: totalMs={TotalMs:F1}", gameId.GameBiz, nrTiming.Elapsed.TotalMilliseconds);
+            }
             await StartGameCoreAsync();
         }
         catch (OperationCanceledException) { }
+        catch (GameAlreadyRunningException ex)
+        {
+            await ShowLaunchBlockedAsync(ex);
+        }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Game launch reservation/preparation failed");
@@ -2088,16 +2103,9 @@ public sealed partial class GameLauncherPage : PageBase
             }
 
             // 非注入模式：游戏进程已经在跑就阻止再启动（用户要求），避免双开 / 注入到旧实例
-            if (!UseInjectMode && await IsTargetGameRunningAsync())
-            {
-                string? processName = await ResolveTargetProcessNameAsync();
-                string name = string.IsNullOrWhiteSpace(processName) ? "游戏" : processName;
-                DispatcherQueue?.TryEnqueue(() => InAppToast.MainWindow?.Warning(
-                    "游戏已经在运行",
-                    $"检测到 {name} 的进程还在，先退出它再启动。",
-                    8000));
-                return;
-            }
+            if (!UseInjectMode)
+                GameLaunchGuard.EnsureCanStart(await ResolveTargetProcessNameAsync()
+                    ?? throw new InvalidOperationException("无法确认游戏进程名，已停止启动。"));
 
             // 缺 DLSS5 的运行时（nvngx_dlssnr.dll）就先弹窗问一下：装了也白装，插件根本加载不了
             if (!await ConfirmDlssRuntimeAsync())
@@ -2895,6 +2903,11 @@ public sealed partial class GameLauncherPage : PageBase
                 }
             }
         }
+        catch (GameAlreadyRunningException ex)
+        {
+            _extraInjectCts?.Cancel();
+            await ShowLaunchBlockedAsync(ex);
+        }
         catch (FileNotFoundException)
         {
             CheckGameVersion();
@@ -2903,6 +2916,13 @@ public sealed partial class GameLauncherPage : PageBase
         {
             _logger.LogError(ex, "Start game");
         }
+    }
+
+    private async Task ShowLaunchBlockedAsync(GameAlreadyRunningException exception)
+    {
+        _logger.LogWarning("Game launch blocked: {Reason}", exception.Message);
+        await CheckGameRunningAsync();
+        InAppToast.MainWindow?.Warning("已阻止重复启动", exception.Message + " 可使用左侧红色停止按钮。", 10000);
     }
 
     /// <summary>
@@ -3008,7 +3028,7 @@ public sealed partial class GameLauncherPage : PageBase
 
             // 1.5 游戏 ini 里的绝对路径如果指向别的 HoYoShade（换过启动器 / 换过用户数据目录），指回来。
             //     用户的原话：「应该用哪个启动器，ini 就对应到哪才对」。
-            AlignGameIniPaths(shadePath);
+            await AlignGameIniPathsAsync(shadePath);
 
             // 2. 进程名：优先用游戏条目里的 exe 文件名（用户自己选的），其次 Hub 的映射，最后内置表
             string? processName = _currentGameEntry?.ProcessName;
@@ -3158,44 +3178,18 @@ public sealed partial class GameLauncherPage : PageBase
     /// 「缺 nvngx_dlssnr.dll」是真的，游戏运行时也确实加载不到。这里在启动/注入前对一次。
     /// </para>
     /// </summary>
-    private void AlignGameIniPaths(string shadePath)
+    private async Task<bool> AlignGameIniPathsAsync(string shadePath)
     {
-        try
-        {
-            if (_currentGameEntry?.ReShadeIniPath is not { } gameIni || !File.Exists(gameIni))
-            {
-                return;
-            }
-
-            ShadeHost? host = ShadeHostLocator.FromShadeRoot(shadePath);
-            if (host is null)
-            {
-                return;
-            }
-
-            // 需求3：启动/注入前先把「每游戏插件包」拼好（这个游戏给插件选过版本才会有）。
-            // 顺序很重要：拼包会把 AddonPath 指到包目录，紧接着的 Align 会认出 pack.json 并跳过它，
-            // 不会把每游戏选版本悄悄改回共享目录。
-            GameAddonPackService.Sync(CurrentGameId, _currentGameEntry, host);
-
-            ShadePathAlignResult align = ShadePathAligner.Align(gameIni, host);
-            GameIniBootstrap.Ensure(_currentGameEntry, host, GameLauncherService.UsesGenshinFinalDx12(CurrentGameId), GameLauncherService.UsesStarRailFinalDx12(CurrentGameId));
-            if (CurrentGameId is { } settingsGameId) ReShadeLauncherSettings.Apply(settingsGameId, gameIni);
-            if (!align.Changed)
-            {
-                return;
-            }
-
-            _logger.LogInformation("ReShade.ini paths re-pointed from {Old} to {New}: {Keys}",
-                align.PreviousRoot, host.RootPath, string.Join(", ", align.ChangedKeys));
-            InAppToast.MainWindow?.Information("ReShade.ini",
-                $"这份 ini 原来指向 {align.PreviousRoot}，已改成当前 HoYoShade：{host.RootPath}（{string.Join("、", align.ChangedKeys)}）",
-                8000);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Align ReShade.ini paths");
-        }
+        if (SnapshotGameId() is not { } gameId) return false;
+        var entry = _currentGameEntry;
+        ShadeHost? host = ShadeHostLocator.FromShadeRoot(shadePath);
+        if (host is null) return false;
+        var reservation = ValidatePageLaunch();
+        var token = _pageLaunchCts!.Token;
+        bool prepared = await Task.Run(() => _gameLauncherService.EnsureGameIniReady(gameId, entry, host), token);
+        reservation.Validate(gameId.GameBiz.ToString(), token);
+        ValidatePageLaunch();
+        return prepared;
     }
 
     /// <summary>鸣潮专用：DLL 留在 Hub，由 DllInjector 等客户端窗口后加载，绝不调用 inject.exe。</summary>
@@ -3491,7 +3485,7 @@ public sealed partial class GameLauncherPage : PageBase
             }
 
             // 这份 ini 里的绝对路径如果指向别的 HoYoShade，先指回当前这个 —— 否则游戏加载的是别人家的插件目录
-            AlignGameIniPaths(shadePath);
+            bool configurationPrepared = await AlignGameIniPathsAsync(shadePath);
 
             var gameInstallPath = GameLauncherService.GetGameInstallPath(CurrentGameId);
             if (string.IsNullOrWhiteSpace(gameInstallPath))
@@ -3542,7 +3536,7 @@ public sealed partial class GameLauncherPage : PageBase
                         : "在 HoYoShade 注入器黑名单里",
                     shadeName);
 
-                var bypassProcess = await StartReservedCurrentGameAsync(CurrentGameId, gameInstallPath);
+                var bypassProcess = await StartReservedCurrentGameAsync(CurrentGameId, gameInstallPath, configurationPrepared);
                 if (bypassProcess is null)
                 {
                     InAppToast.MainWindow?.Error(Lang.GameLauncher_GameLaunchFailed);
@@ -3581,7 +3575,7 @@ public sealed partial class GameLauncherPage : PageBase
             _logger.LogInformation("{ShadeName} injector is ready, launching game...", shadeName);
 
             // Injector is ready and waiting for game process - now launch the game
-            var gameProcess = await StartReservedCurrentGameAsync(CurrentGameId, gameInstallPath);
+            var gameProcess = await StartReservedCurrentGameAsync(CurrentGameId, gameInstallPath, configurationPrepared);
 
             if (gameProcess != null)
             {

@@ -109,9 +109,9 @@ internal static class GameAddonPackService
             return null;
         }
 
-        if (nrVersion is not null)
+        string? nrSource = nrVersion is null ? null : NrRuntimeLibrary.VersionFile(cacheRoot, nrVersion);
+        if (nrSource is not null)
         {
-            string nrSource = NrRuntimeLibrary.VersionFile(cacheRoot, nrVersion);
             string[] nrTargets = entries.Where(e => HysxFileLink.IsNeuralRuntime(e.FileName))
                 .Select(e => e.FileName).Append(NrRuntimeLibrary.FileName).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
             entries.RemoveAll(e => HysxFileLink.IsNeuralRuntime(e.FileName));
@@ -126,30 +126,23 @@ internal static class GameAddonPackService
         string identity = GameAddonPack.ComputeIdentity(gameKey, entries, selectionPairs);
         GameAddonPack.Sync(addonsDirectory, entries, selectionPairs, identity, preserveSettings);
 
-        if (nrVersion is not null)
+        if (nrSource is not null)
         {
-            string source = NrRuntimeLibrary.VersionFile(cacheRoot, nrVersion);
-            HysxFileLink.LinkNeuralRuntime(source, Path.Combine(addonsDirectory, NrRuntimeLibrary.FileName));
             // 已存在的插件子目录也绑定相同版本。
-            foreach (string nrFile in Directory.EnumerateFiles(addonsDirectory, NrRuntimeLibrary.FileName, SearchOption.AllDirectories))
-                HysxFileLink.LinkNeuralRuntime(source, nrFile);
+            foreach (string nrFile in Directory.EnumerateFiles(addonsDirectory, NrRuntimeLibrary.FileName, SearchOption.AllDirectories)
+                .Append(Path.Combine(addonsDirectory, NrRuntimeLibrary.FileName)).Distinct(StringComparer.OrdinalIgnoreCase))
+                HysxFileLink.LinkNeuralRuntime(nrSource, nrFile);
         }
 
         // 包 presets\ 随同步进 DLSS5-Presets（启动路径 GameIniBootstrap 也会再做一次兜底）
         if (!preserveSettings)
             GameAddonPackUserContent.SyncPresets(packDirectory, addonsDirectory);
 
-        if (iniPath is not null)
+        if (entry is not null)
         {
             try
             {
-                ReShadeProfile profile = ReShadeProfile.Load(iniPath);
-                string full = Path.GetFullPath(addonsDirectory);
-                if (!string.Equals(profile.AddonPath, full, StringComparison.OrdinalIgnoreCase))
-                {
-                    profile.SetAddonPath(full);
-                    profile.Save();
-                }
+                GamePackIniBinding.Bind(entry, host, addonsDirectory);
             }
             catch
             {

@@ -1,6 +1,8 @@
 using Microsoft.Extensions.Logging;
 using System;
 using System.Diagnostics;
+using System.Collections.Concurrent;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -11,6 +13,9 @@ namespace HoYoShadeHub.Features.GameLauncher;
 /// </summary>
 public static class InjectorHelper
 {
+    private const int MAX_DIAGNOSTIC_LINES = 20;
+    private const int MAX_DIAGNOSTIC_LINE_LENGTH = 512;
+
     /// <summary>
     /// Ready marker that injector outputs to stderr when validation passes
     /// </summary>
@@ -68,19 +73,29 @@ public static class InjectorHelper
     {
         try
         {
+            // The framework injector can loop forever trying to terminate retained
+            // game records before READY. Always use our versioned, non-terminating
+            // injector with the selected framework root; keep ReShade/config intact.
+            string launcherInjector = Path.Combine(AppContext.BaseDirectory, "F6ShadeInjector.exe");
+            if (!File.Exists(launcherInjector))
+                throw new FileNotFoundException("启动器缺少 F6ShadeInjector.exe，请完整解压启动器更新包。", launcherInjector);
             var startInfo = new ProcessStartInfo
             {
-                FileName = injectExePath,
-                Arguments = gameExeName,
+                FileName = launcherInjector,
                 UseShellExecute = false,
                 WorkingDirectory = shadePath,
                 CreateNoWindow = true, // Hide console window completely
                 RedirectStandardOutput = true,
                 RedirectStandardError = true
             };
+            startInfo.ArgumentList.Add(gameExeName);
+            startInfo.ArgumentList.Add("--shade-root");
+            startInfo.ArgumentList.Add(Path.GetFullPath(shadePath));
 
             logger.LogInformation("Starting {ShadeName} injector: {InjectPath} {GameExe}",
-                shadeName, injectExePath, gameExeName);
+                shadeName, launcherInjector, gameExeName);
+            logger.LogInformation("{ShadeName} framework root: {ShadeRoot}; legacy injector: {LegacyInjector}",
+                shadeName, shadePath, injectExePath);
 
             Process? process = Process.Start(startInfo);
             if (process == null)
@@ -98,39 +113,44 @@ public static class InjectorHelper
             // 3. Timeout
             
             using var cts = new CancellationTokenSource(timeoutMs);
-            var readyTcs = new TaskCompletionSource<bool>();
+            var readyTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var stdoutTail = new ConcurrentQueue<string>();
+            var stderrTail = new ConcurrentQueue<string>();
             int? detectedExitCode = null;
 
-            // Monitor stdout for logging (but ready marker is in stderr)
+            void Capture(ConcurrentQueue<string> tail, string stream, string? data)
+            {
+                if (data is null) return;
+                string line = data.Length > MAX_DIAGNOSTIC_LINE_LENGTH
+                    ? data[..MAX_DIAGNOSTIC_LINE_LENGTH] + "..."
+                    : data;
+                tail.Enqueue(line);
+                while (tail.Count > MAX_DIAGNOSTIC_LINES) tail.TryDequeue(out _);
+                logger.LogDebug("{ShadeName} {Stream}: {Data}", shadeName, stream, line);
+                if (data.Contains(READY_MARKER, StringComparison.Ordinal))
+                {
+                    logger.LogInformation("{ShadeName} injector is ready (received ready marker on {Stream})",
+                        shadeName, stream);
+                    readyTcs.TrySetResult(true);
+                }
+            }
+
             process.OutputDataReceived += (sender, e) =>
-            {
-                if (e.Data != null)
-                {
-                    logger.LogDebug("{ShadeName} stdout: {Data}", shadeName, e.Data);
-                }
-            };
+                Capture(stdoutTail, "stdout", e.Data);
 
-            // Monitor stderr for ready marker
             process.ErrorDataReceived += (sender, e) =>
-            {
-                if (e.Data != null)
-                {
-                    logger.LogDebug("{ShadeName} stderr: {Data}", shadeName, e.Data);
-                    if (e.Data.Contains(READY_MARKER))
-                    {
-                        logger.LogInformation("{ShadeName} injector is ready (received ready marker)", shadeName);
-                        readyTcs.TrySetResult(true);
-                    }
-                }
-            };
+                Capture(stderrTail, "stderr", e.Data);
 
-            process.EnableRaisingEvents = true;
             process.Exited += (sender, e) =>
             {
-                detectedExitCode = process.ExitCode;
+                // A timeout/cancel path or the successful caller may already have
+                // released this Process while its exit callback was queued.
+                try { detectedExitCode = process.ExitCode; }
+                catch (InvalidOperationException) { return; }
                 logger.LogInformation("{ShadeName} injector exited with code: {ExitCode}", shadeName, detectedExitCode);
                 readyTcs.TrySetResult(false);
             };
+            process.EnableRaisingEvents = true;
 
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
@@ -153,6 +173,9 @@ public static class InjectorHelper
                 {
                     // Process exited - check exit code
                     int exitCode = detectedExitCode.Value;
+                    logger.LogWarning("{ShadeName} injector stopped before launch (code {ExitCode}). stdout tail: {Stdout}; stderr tail: {Stderr}",
+                        shadeName, exitCode, string.Join(" | ", stdoutTail), string.Join(" | ", stderrTail));
+                    process.Dispose();
                     if (InjectorErrorCodes.IsInjectorError(exitCode))
                     {
                         logger.LogWarning("{ShadeName} validation failed with error code: {ExitCode}", shadeName, exitCode);
@@ -167,8 +190,11 @@ public static class InjectorHelper
                 else
                 {
                     // Timeout
-                    logger.LogWarning("{ShadeName} injector timed out waiting for ready signal", shadeName);
+                    logger.LogWarning(
+                        "{ShadeName} injector timed out waiting for ready signal after {TimeoutMs} ms. stdout tail: {Stdout}; stderr tail: {Stderr}",
+                        shadeName, timeoutMs, string.Join(" | ", stdoutTail), string.Join(" | ", stderrTail));
                     try { process.Kill(); } catch { }
+                    process.Dispose();
                     return (false, -1, null);
                 }
             }
@@ -176,6 +202,7 @@ public static class InjectorHelper
             {
                 logger.LogWarning("{ShadeName} injector operation cancelled", shadeName);
                 try { process.Kill(); } catch { }
+                process.Dispose();
                 return (false, -1, null);
             }
         }

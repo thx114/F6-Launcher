@@ -2,6 +2,7 @@ using Dapper;
 using Microsoft.Extensions.Logging;
 using Microsoft.Windows.AppLifecycle;
 using HoYoShadeHub.Core;
+using HoYoShadeHub.Extensions.Games;
 using HoYoShadeHub.Core.HoYoPlay;
 using HoYoShadeHub.Features.Database;
 using HoYoShadeHub.Features.GameLauncher;
@@ -412,8 +413,8 @@ internal class PlayTimeService
             for (int i = 0; i < 15; i++)
             {
                 await Task.Delay(2000);
-                var processes = Process.GetProcessesByName(name);
-                if (processes.Length == 0)
+                Process? process = GameProcessDiscovery.FindRunning(name);
+                if (process is null)
                 {
                     if (i < 5)
                     {
@@ -422,30 +423,10 @@ internal class PlayTimeService
                     // 未找到游戏进程
                     return null;
                 }
-                foreach (var process in processes)
-                {
-                    var instance = App.FindInstanceForKey($"playtime_{process.Id}");
-                    if (instance != null)
-                    {
-                        // 已经有进程在记录该游戏
-                        _logger.LogInformation("Game process ({biz}, {gamePid}) has been recorded by process ({playtimePid})", biz, process.Id, instance.ProcessId);
-                        continue;
-                    }
-                    if (process.SessionId != Process.GetCurrentProcess().SessionId)
-                    {
-                        // 游戏进程不在当前会话
-                        _logger.LogWarning("Game process ({biz}, {gamePid}) is not in the current session", biz, process.Id);
-                        continue;
-                    }
-                    _logger.LogInformation("Start to log playtime ({biz}, {pid})", biz, process.Id);
-                    Process.Start(new ProcessStartInfo
-                    {
-                        FileName = AppConfig.HoYoShadeHubExecutePath,
-                        Arguments = $"playtime --biz {biz} --pid {process.Id}",
-                        CreateNoWindow = true,
-                    });
-                    return process;
-                }
+                // Logging is a side effect, never the source of process identity.
+                // Return this exact verified game even if logging already exists/fails.
+                await StartProcessToLogAsync(gameId, process.Id);
+                return process;
             }
         }
         catch (Exception ex)
@@ -466,7 +447,10 @@ internal class PlayTimeService
     {
         try
         {
-            Process process = Process.GetProcessById(pid);
+            using Process process = Process.GetProcessById(pid);
+            using var current = Process.GetCurrentProcess();
+            if (GameProcessDiscovery.Inspect(process, current.SessionId).Status != GameProcessStatus.Running)
+                return;
             var biz = gameId.GameBiz;
             string name = await GetGameExeNameWithoutExtensionAsync(gameId);
             if (process.ProcessName != name)
@@ -481,7 +465,7 @@ internal class PlayTimeService
                 return;
             }
 
-            Process? p = Process.Start(new ProcessStartInfo
+            using Process? p = Process.Start(new ProcessStartInfo
             {
                 FileName = AppConfig.HoYoShadeHubExecutePath,
                 Arguments = $"playtime --biz {biz} --pid {process.Id}",

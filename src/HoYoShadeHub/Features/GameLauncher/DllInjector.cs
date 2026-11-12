@@ -8,6 +8,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using HoYoShadeHub.Extensions.Games;
 
 namespace HoYoShadeHub.Features.GameLauncher;
 
@@ -270,6 +271,8 @@ internal static partial class DllInjector
         }
 
         DateTime deadline = DateTime.UtcNow + timeout;
+        using var current = Process.GetCurrentProcess();
+        int sessionId = current.SessionId;
 
         while (DateTime.UtcNow < deadline)
         {
@@ -277,34 +280,9 @@ internal static partial class DllInjector
 
             try
             {
-                Process[] hits = Process.GetProcessesByName(name);
-                Process? picked = null;
-
-                foreach (Process hit in hits)
-                {
-                    if (excludeProcessIds is not null && excludeProcessIds.Contains(hit.Id))
-                    {
-                        hit.Dispose();
-                        continue;
-                    }
-
-                    picked = hit;
-                    break;
-                }
-
-                if (picked is not null)
-                {
-                    // 没选中的那些要释放掉
-                    foreach (Process hit in hits)
-                    {
-                        if (!ReferenceEquals(hit, picked))
-                        {
-                            hit.Dispose();
-                        }
-                    }
-
-                    return picked;
-                }
+                Process? picked = GameProcessDiscovery.FindRunning(
+                    Process.GetProcessesByName(name), sessionId, excludeProcessIds);
+                if (picked is not null) return picked;
             }
             catch
             {
@@ -323,7 +301,8 @@ internal static partial class DllInjector
         try
         {
             using Process process = Process.GetProcessById(processId);
-            return !process.HasExited;
+            using Process current = Process.GetCurrentProcess();
+            return GameProcessDiscovery.IsRunning(process, current.SessionId);
         }
         catch
         {

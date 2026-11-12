@@ -91,18 +91,24 @@ public static partial class LauncherActionRunner
             return PackActionOncePolicy.Block("✗ 覆盖包动作内容已变化，请显式重新确认；动作批次已阻断。", PackActionOncePolicy.BlockReason.ContextChanged);
         action = boundAction;
         string hash = fromPack ? snapshot!.Hash : string.Empty;
+        PackStepSelection? selection = fromPack && context.GameBiz is { } selectionGame
+            ? PackActionConsent.TrySelection(selectionGame.Value, hash) : null;
+        bool StepEnabled(PackAutoAction candidate, int index) => selection?.IsEnabled(candidate, index) ?? !fromPack;
         bool Current() => (context.IsContextCurrent?.Invoke() ?? true)
-            && (!fromPack || (context.GameBiz is { } biz && PackActionConsent.IsConsented(biz.Value, hash)
-                && !PackActionConsent.DisabledActions(biz.Value, hash).Contains(action.Name)));
+            && (!fromPack || (context.GameBiz is { } biz
+                && selection is not null && selection.HasEnabledSteps(action)
+                && PackActionConsent.TrySelection(biz.Value, hash) is { } currentSelection
+                && currentSelection.DisabledActions.SetEquals(selection.DisabledActions)
+                && currentSelection.DisabledSteps.SetEquals(selection.DisabledSteps)));
         if (!Current()) return PackActionOncePolicy.Block("✗ 未获同意、已禁用或上下文已变化；动作批次已阻断。", PackActionOncePolicy.BlockReason.ContextChanged);
         IEnumerable<PackAutoAction> requirementActions = fromPack
-            ? snapshot!.LoadActions().Where(candidate => !PackActionConsent.DisabledActions(context.GameBiz!.Value.Value, hash).Contains(candidate.Name))
+            ? snapshot!.LoadActions().Where(candidate => selection!.HasEnabledSteps(candidate))
             : [action];
-        if (await CheckLauncherRequirementsAsync(requirementActions, context) is { } unmet) return unmet;
+        if (await CheckLauncherRequirementsAsync(requirementActions, context, StepEnabled) is { } unmet) return unmet;
         if (!Current()) return PackActionOncePolicy.Block("✗ 版本检查期间上下文已变化；动作批次已阻断。", PackActionOncePolicy.BlockReason.ContextChanged);
         if (fromPack && !snapshot!.IsCurrent(context.PackRoot!))
             return PackActionOncePolicy.Block("✗ 覆盖包内容已变化，未初始化 INI；请重新确认。", PackActionOncePolicy.BlockReason.ContextChanged);
-        try { GameLaunchIniPreparation.EnsurePackActionTarget(context.Entry, context.Host, [action]); }
+        try { GameLaunchIniPreparation.EnsurePackActionTarget(context.Entry, context.Host, [action], StepEnabled); }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Cannot prepare package ReShade.ini target");
@@ -111,7 +117,7 @@ public static partial class LauncherActionRunner
         if (fromPack)
             return await PackActionOncePolicy.RunSnapshotAsync(action, snapshot!, context.PackRoot!, Current,
                 step => DispatchStepAsync(step, context), context.Report,
-                confirmPendingIniRetry: step => ConfirmPendingIniRetryAsync(step, context));
+                confirmPendingIniRetry: step => ConfirmPendingIniRetryAsync(step, context), isStepEnabled: StepEnabled);
         bool needsLedger = action.Steps.Any(step => PackActionOncePolicy.RequiresOnce(fromPack, step));
         PackOnceLedger.Session? ledger = null;
         try
@@ -177,6 +183,7 @@ public static partial class LauncherActionRunner
             "set_cmd_launch" => SetCmdLaunch(step, context),
             "set_cmd_args" => SetCmdArgs(step, context),
             "set_launch_option" => SetLaunchOption(step, context),
+            "reset_launch_options" => ResetLaunchOptions(context),
 
             // ===== OptiScaler / 模块 / XXMI =====
             "set_opt" or "set_optiscaler" => SetOptiScaler(step, context),
@@ -195,6 +202,7 @@ public static partial class LauncherActionRunner
             "set_game_setting" => SetGameSetting(step, context),
             "set_window_mode" or "force_window_mode" => SetWindowMode(step, context),
             "override_files" => OverrideFiles(step, context),
+            "copy_file" or "place_file" => await PlaceFileAsync(step, context),
             "import_shader" => ImportShader(step, context),
             "set_shader" => SetShader(step, context),
             "delete_shader" => DeleteShader(step, context),
