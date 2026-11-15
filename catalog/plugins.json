@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updatedAt": "2026-10-10T00:00:00Z",
+  "updatedAt": "2026-11-15T04:33:05.833712+00:00",
   "_readme": [
     "远端插件目录：不重新发版也能加/改插件条目（按 id 覆盖内置的同 id 条目，新 id 直接追加）。",
     "字段语义见仓库 docs/OPEN-SOURCE-PLAN.md；改完务必跑一遍扩展自测的 --online（会逐条解析 tag/资产、并检查规则能不能命中资产名）。",
@@ -352,35 +352,7 @@
     },
     {
       "id": "renodx.mfgunlock",
-      "name": "RenoDX MFG Unlock（RTX 40 系多帧生成解锁）",
-      "version": "latest",
-      "author": "ImDreamt",
-      "description": "让 RTX 40 系把 DLSS 多帧生成开到 3x/4x/6x（NVIDIA 默认只给 50 系开），并修正插帧的时间中点，让多出来的帧带新运动而不是重复帧。纯内存改，不落地、不重分发 NVIDIA 文件。要求：40 系卡 + 游戏本身走 Streamline 的 DLSS 帧生成，且 nvngx_dlssg.dll 是 310.x；作者公开测过的是 Cyberpunk 2077 / Deep Rock Galactic / GTA V Enhanced —— 原神/星铁/绝区零这类没有 DLSS 帧生成的游戏装了不会有任何效果。装好后到 ReShade 叠加层的 Add-ons 里找「MFG Unlock」。",
-      "homepage": "https://github.com/ImDreamt/MFGAdaUnlock-RenoDx/releases",
-      "tags": [
-        "mfg",
-        "framegen",
-        "renodx"
-      ],
-      "hosts": [
-        "HoYoShade"
-      ],
-      "source": {
-        "type": "github-release",
-        "repository": "ImDreamt/MFGAdaUnlock-RenoDx",
-        "tagPattern": "^\\d",
-        "assetName": "renodx-mfgunlock.addon64"
-      },
-      "addonPatterns": [
-        "renodx-mfgunlock*"
-      ],
-      "rules": [
-        {
-          "match": "*.addon64",
-          "to": "reshade-shaders/Addons",
-          "flatten": true
-        }
-      ]
+      "removed": true
     },
     {
       "id": "hoyoshade.presets",

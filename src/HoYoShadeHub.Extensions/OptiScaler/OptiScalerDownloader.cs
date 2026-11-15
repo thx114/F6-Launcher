@@ -37,7 +37,7 @@ public sealed class OptiScalerDownloader
     public async Task<List<ExtensionVersion>> ListVersionsAsync(OptiScalerSource source, CancellationToken cancellationToken = default, bool forceRefresh = false)
         => await _resolver.ListVersionsAsync(source.ToExtensionSource(), 20, cancellationToken, forceRefresh);
 
-    /// <summary>这个版本里能装的压缩包（.zip，去掉 sha256 清单那些）</summary>
+    /// <summary>这个版本里能装的压缩包（ZIP / 7z，去掉 sha256 清单那些）</summary>
     public async Task<List<string>> ListAssetsAsync(OptiScalerSource source, string tag, CancellationToken cancellationToken = default)
         => (await ListAssetChoicesAsync(source, tag, cancellationToken)).Names;
 
@@ -57,7 +57,7 @@ public sealed class OptiScalerDownloader
     }
 
     /// <summary>
-    /// 能装的包：zip 压缩包 / 来源自己的安装程序（.exe）/ 裸 dll。
+    /// 能装的包：ZIP / 7z 压缩包 / 来源自己的安装程序（.exe）/ 裸 dll。
     /// <para>
     /// 裸 dll 是必须支持的：有些模块仓库 release 里就只挂一个 <c>version.dll</c>
     ///（matiasLombo/mfg-unlock 的 v1.4 就是这样）。以前只认 zip / exe，
@@ -66,7 +66,8 @@ public sealed class OptiScalerDownloader
     /// </summary>
     public static bool IsUsableAsset(string name)
     {
-        bool archive = name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase);
+        bool archive = name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)
+            || name.EndsWith(".7z", StringComparison.OrdinalIgnoreCase);
         bool installer = name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase);
         bool rawDll = name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase);
 
@@ -146,8 +147,7 @@ public sealed class OptiScalerDownloader
 
         if (!IsUsableAsset(asset))
         {
-            // 7z 之类：Extensions 这边没有解压器，明确告诉用户而不是下完了才失败
-            throw new NotSupportedException($"只支持 .zip 压缩包或 .exe 安装程序，这个 release 里挑出来的是 {asset}。");
+            throw new NotSupportedException($"只支持 ZIP / 7z 压缩包、EXE 安装程序或 DLL，这个 release 里挑出来的是 {asset}。");
         }
 
         ExtensionSource ext = source.ToExtensionSource();
@@ -212,12 +212,15 @@ public sealed class OptiScalerDownloader
 
         try
         {
-            string zipPath = Path.Combine(workRoot, OptiScalerLibrary.Sanitize(artifact.AssetName));
-            await _downloads.DownloadToFileAsync(artifact.DownloadUrl, zipPath, null, progress, cancellationToken, pauseToken);
+            string archivePath = Path.Combine(workRoot, OptiScalerLibrary.Sanitize(artifact.AssetName));
+            await _downloads.DownloadToFileAsync(artifact.DownloadUrl, archivePath, null, progress, cancellationToken, pauseToken);
 
             string extractRoot = Path.Combine(workRoot, "payload");
             Directory.CreateDirectory(extractRoot);
-            ZipExtractor.ExtractToDirectory(zipPath, extractRoot);
+            // The shared extractor supports 7z via Windows tar. Keep large archives
+            // off the UI thread and finish extraction before replacing an installed build.
+            await Task.Run(() => ZipExtractor.ExtractToDirectory(archivePath, extractRoot,
+                cancellationToken, _ => { }), cancellationToken);
 
             string target = library.DirectoryFor(source.Id, tag);
             if (Directory.Exists(target))
