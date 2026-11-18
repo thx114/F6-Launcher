@@ -111,12 +111,36 @@ internal static class GenshinGraphicsSettingsTests
         Directory.CreateDirectory(temp);
         try
         {
+            string cachePath = Path.Combine(temp, "Dx11FsrBridge.render-scale.cache");
+            string missingDirectory = Path.Combine(temp, "missing");
+            Check(OptiScalerRuntime.ReadFsrBridgeRenderScaleIndex(null) == -1, "Missing Bridge directory remains unselected");
+            Check(OptiScalerRuntime.ReadFsrBridgeRenderScaleIndex(missingDirectory) == -1
+                && !Directory.Exists(missingDirectory), "Reading a missing Bridge directory does not create it");
+            Check(OptiScalerRuntime.ReadFsrBridgeRenderScaleIndex(temp) == -1 && !File.Exists(cachePath),
+                "Reading a missing Bridge cache does not invent or persist a default");
             for (int index = 0; index < 9; index++)
             {
-                Check(OptiScalerRuntime.EnsureFsrBridgeRenderScale(temp, OptiScalerRuntime.FsrBridgeRenderScales[index]), "Write bridge cache");
-                Check(File.ReadAllText(Path.Combine(temp, "Dx11FsrBridge.render-scale.cache"))
+                Check(OptiScalerRuntime.SetFsrBridgeRenderScale(temp, OptiScalerRuntime.FsrBridgeRenderScales[index]), "Explicitly write Bridge cache");
+                Check(File.ReadAllText(cachePath)
                     == $"version 1{Environment.NewLine}index {index}{Environment.NewLine}", "Bridge cache selects requested scale");
+                byte[] before = File.ReadAllBytes(cachePath);
+                DateTime written = File.GetLastWriteTimeUtc(cachePath);
+                Check(OptiScalerRuntime.ReadFsrBridgeRenderScaleIndex(temp) == index, "Read actual Bridge selection");
+                Check(File.ReadAllBytes(cachePath).SequenceEqual(before) && File.GetLastWriteTimeUtc(cachePath) == written,
+                    "Reading Bridge selection preserves cache bytes and write time");
             }
+            foreach (string invalid in new[] { "", "version 1", "version 1\nindex -1\n", "version 1\nindex 9\n", "version 1\nindex invalid\n", "version 1\nindex\n" })
+            {
+                File.WriteAllText(cachePath, invalid);
+                Check(OptiScalerRuntime.ReadFsrBridgeRenderScaleIndex(temp) == -1
+                    && File.ReadAllText(cachePath) == invalid, "Invalid Bridge cache remains unchanged and unselected");
+            }
+            File.WriteAllText(cachePath, "version 1\nfuture value\nindex\t8\n");
+            Check(OptiScalerRuntime.ReadFsrBridgeRenderScaleIndex(temp) == 8,
+                "Bridge cache reader accepts native whitespace and ignored metadata");
+            using (File.Open(cachePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+                Check(OptiScalerRuntime.ReadFsrBridgeRenderScaleIndex(temp) == -1,
+                    "Unreadable Bridge cache remains unselected");
         }
         finally { Directory.Delete(temp, true); }
         Check(OptiScalerRuntime.FsrBridgeRenderScales.Contains(0.999f), "Bridge render scale exposes 0.999");

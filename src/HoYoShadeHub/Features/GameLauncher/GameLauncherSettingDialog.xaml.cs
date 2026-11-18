@@ -22,6 +22,7 @@ using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Storage;
@@ -50,12 +51,17 @@ public sealed partial class GameLauncherSettingDialog : ContentDialog
 
     private readonly BackgroundService _backgroundService = AppConfig.GetService<BackgroundService>();
 
+    private CancellationTokenSource? _gameSizeCancellation;
+    private int _basicInfoRevision;
+    private bool _dialogActive;
+
 
     public GameLauncherSettingDialog()
     {
         this.InitializeComponent();
         this.Loaded += GameLauncherSettingDialog_Loaded;
         this.Unloaded += GameLauncherSettingDialog_Unloaded;
+        this.Closed += (_, _) => CancelGameSizeSummary();
     }
 
 
@@ -153,6 +159,7 @@ public sealed partial class GameLauncherSettingDialog : ContentDialog
 
     private async void GameLauncherSettingDialog_Loaded(object sender, RoutedEventArgs e)
     {
+        _dialogActive = true;
         CurrentGameBiz = CurrentGameId?.GameBiz ?? GameBiz.None;
         CheckCanRepairGame();
         await InitializeBasicInfoAsync();
@@ -272,6 +279,7 @@ public sealed partial class GameLauncherSettingDialog : ContentDialog
 
     private void GameLauncherSettingDialog_Unloaded(object sender, RoutedEventArgs e)
     {
+        CancelGameSizeSummary();
         LatestPackageGroups = null!;
         PreInstallPackageGroups = null!;
         FlipView_Settings.Items.Clear();
@@ -386,11 +394,16 @@ public sealed partial class GameLauncherSettingDialog : ContentDialog
 
     private async Task InitializeBasicInfoAsync()
     {
+        int revision = ++_basicInfoRevision;
+        _gameSizeCancellation?.Cancel();
+        GameSize = null;
         try
         {
             _ignoreDX12Check = AppConfig.GetIgnoreDX12Check(CurrentGameBiz);
             OnPropertyChanged(nameof(IgnoreDX12Check));
-            IsIgnoreDX12CheckVisible = await _hoyoPlayService.IsGameSupportDX12Async(CurrentGameId);
+            bool supportsDx12 = await _hoyoPlayService.IsGameSupportDX12Async(CurrentGameId);
+            if (!_dialogActive || revision != _basicInfoRevision) return;
+            IsIgnoreDX12CheckVisible = supportsDx12;
             ShowUninstallReShadeCompletedMessage = false;
             IsUninstallReShadeDialogOpen = false;
             IsUninstallReShadeFirstConfirmation = true;
@@ -401,10 +414,12 @@ public sealed partial class GameLauncherSettingDialog : ContentDialog
             else
             {
                 var info = await _hoyoPlayService.GetGameInfoAsync(CurrentGameId);
+                if (!_dialogActive || revision != _basicInfoRevision) return;
                 CurrentGameBizIcon = new GameBizIcon(info);
             }
             InstallPath = GameLauncherService.GetGameInstallPath(CurrentGameId, out bool storageRemoved);
-            GameSize = GetSize(InstallPath);
+            if (!_dialogActive || revision != _basicInfoRevision) return;
+            StartGameSizeSummary(InstallPath, revision);
             if (await _gameLauncherService.GetGameProcessAsync(CurrentGameId) is null)
             {
                 UninstallAndRepairEnabled = InstallPath != null && !storageRemoved;
@@ -423,15 +438,74 @@ public sealed partial class GameLauncherSettingDialog : ContentDialog
 
 
 
-    private static string? GetSize(string? path)
+    private void CancelGameSizeSummary()
     {
-        if (!Directory.Exists(path))
+        _dialogActive = false;
+        ++_basicInfoRevision;
+        _gameSizeCancellation?.Cancel();
+        _gameSizeCancellation?.Dispose();
+        _gameSizeCancellation = null;
+    }
+
+    private void StartGameSizeSummary(string? path, int revision)
+    {
+        _gameSizeCancellation?.Cancel();
+        _gameSizeCancellation?.Dispose();
+        _gameSizeCancellation = new();
+        _ = UpdateGameSizeSummaryAsync(path, revision, _gameSizeCancellation.Token);
+    }
+
+    private async Task UpdateGameSizeSummaryAsync(string? path, int revision, CancellationToken token)
+    {
+        try
         {
-            return null;
+            var summary = await Task.Run(() => ReadDirectorySizeSummary(path, token), token);
+            if (token.IsCancellationRequested || !_dialogActive || revision != _basicInfoRevision ||
+                !string.Equals(path, InstallPath, StringComparison.OrdinalIgnoreCase)) return;
+            GameSize = summary is null ? null : $"{(double)summary.Value.Bytes / (1L << 30):F2}GB{(summary.Value.Partial ? "（部分）" : "")}";
         }
-        var size = new DirectoryInfo(path).EnumerateFiles("*", SearchOption.AllDirectories).Sum(f => f.Length);
-        var gb = (double)size / (1 << 30);
-        return $"{gb:F2}GB";
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Read game directory size summary");
+        }
+    }
+
+    internal static (long Bytes, bool Partial)? ReadDirectorySizeSummary(string? path, CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path)) return null;
+        long bytes = 0;
+        bool partial = false;
+        var directories = new Stack<string>();
+        directories.Push(path);
+        var options = new EnumerationOptions
+        {
+            RecurseSubdirectories = false,
+            IgnoreInaccessible = false,
+            AttributesToSkip = 0,
+            ReturnSpecialDirectories = false,
+        };
+        while (directories.TryPop(out string? directory))
+        {
+            token.ThrowIfCancellationRequested();
+            try
+            {
+                foreach (var entry in new DirectoryInfo(directory).EnumerateFileSystemInfos("*", options))
+                {
+                    token.ThrowIfCancellationRequested();
+                    try
+                    {
+                        if ((entry.Attributes & System.IO.FileAttributes.ReparsePoint) != 0) { partial = true; continue; }
+                        if (entry is DirectoryInfo child) directories.Push(child.FullName);
+                        else if (entry is FileInfo file) bytes += file.Length;
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { partial = true; }
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { partial = true; }
+        }
+        return (bytes, partial);
     }
 
 

@@ -9,7 +9,6 @@ using HoYoShadeHub.Features.OptiScaler;
 using HoYoShadeHub.Features.Plugins;
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -59,7 +58,7 @@ internal static class RocketLaunchPreparation
             var discovery = GameCatalog.CreateService();
             entry ??= GameCatalog.GetOrCreate(discovery, gameId);
             if (entry?.ExePath is not { Length: > 0 } exe || !File.Exists(exe)) return new(false, "请先定位游戏主程序。");
-            // Name polling only. Never prepare files against a currently running game.
+            // Use the same active-process inspection as normal launch, including retained exit records.
             if (IsGameRunning(rocketGame, exe)) return new(false, entry.DisplayName + " 正在运行，请自行退出后准备火箭联动。");
 
             bool optEnabled = AppConfig.GetUseOptiScalerLaunchOption(gameId);
@@ -112,7 +111,6 @@ internal static class RocketLaunchPreparation
             if (!OptiScalerRuntime.SetRocketMode(build, true))
                 return new(false, "写入 OptiScaler RocketMode=true 失败。");
             OptiScalerRuntime.EnsureFsrBridgeIni(bridgeDirectory);
-            OptiScalerRuntime.EnsureFsrBridgeRenderScale(bridgeDirectory, AppConfig.GetGenshinBridgeRenderScale(gameId));
             if (OptiScalerRuntime.WriteFsrBridgeAutoload(bridgeDirectory, opt) is null
                 || !OptiScalerRuntime.EnsureFsrBridgeOptiSidecar(bridgeDirectory, build))
                 return new(false, "准备桥的 OptiScaler 配套配置失败。");
@@ -283,10 +281,10 @@ internal static class RocketLaunchPreparation
         if (rocketGame == "原神") names.AddRange(["YuanShen", "GenshinImpact"]);
         foreach (string name in names.Where(n => !string.IsNullOrWhiteSpace(n)).Distinct(StringComparer.OrdinalIgnoreCase))
         {
-            var processes = Process.GetProcessesByName(name);
-            bool running = processes.Length != 0;
-            foreach (var process in processes) process.Dispose();
-            if (running) return true;
+            var match = GameProcessDiscovery.FindBlocking(name);
+            if (match is null) continue;
+            match.Process.Dispose();
+            return true;
         }
         return false;
     }

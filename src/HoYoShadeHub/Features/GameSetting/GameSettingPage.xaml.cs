@@ -12,11 +12,13 @@ using HoYoShadeHub.Extensions.Games;
 using HoYoShadeHub.Extensions.Services;
 using HoYoShadeHub.Features.GameLauncher;
 using HoYoShadeHub.Features.GameSelector;
+using HoYoShadeHub.Features.Modules;
 using HoYoShadeHub.Frameworks;
 using HoYoShadeHub.Helpers;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 
@@ -179,6 +181,7 @@ public sealed partial class GameSettingPage : PageBase
     }
 
 
+    private int _savedStarRailFpsIndex = -1;
     public int StarRailFpsIndex
     {
         get;
@@ -237,7 +240,11 @@ public sealed partial class GameSettingPage : PageBase
         }
     }
 
-    private int _genshinBridgeRenderScaleIndex = 4;
+    private string? _genshinBridgeDirectory;
+    private int _savedGenshinBridgeRenderScaleIndex = -1;
+    public bool IsGenshinBridgeRenderScaleAvailable => _genshinBridgeDirectory is not null;
+
+    private int _genshinBridgeRenderScaleIndex = -1;
     public int GenshinBridgeRenderScaleIndex
     {
         get => _genshinBridgeRenderScaleIndex;
@@ -416,7 +423,7 @@ public sealed partial class GameSettingPage : PageBase
             {
                 IsGraphicsSettingEnable = true;
                 StackPanel_StarRailFPS.Visibility = Visibility.Visible;
-                StarRailFpsIndex = GameSettingService.GetStarRailFPSIndex(CurrentGameBiz);
+                StarRailFpsIndex = _savedStarRailFpsIndex = GameSettingService.GetStarRailFPSIndex(CurrentGameBiz);
             }
             if (CurrentGameBiz.Game is GameBiz.hk4e)
             {
@@ -424,7 +431,13 @@ public sealed partial class GameSettingPage : PageBase
                 StackPanel_GenshinHDR.Visibility = Visibility.Visible;
                 StackPanel_GenshinFpsUnlock.Visibility = Visibility.Visible;
                 StackPanel_GenshinGraphics.Visibility = Visibility.Visible;
-                GenshinBridgeRenderScaleIndex = AppConfig.GetGenshinBridgeRenderScaleIndex(CurrentGameId);
+                // Display the selected Bridge's current cache, never a remembered launch default.
+                string? bridgeDll = ModuleRegistry.ResolveInjectionDlls(CurrentGameId)
+                    .FirstOrDefault(spec => ModuleRegistry.IsGenshinFsrBridgeDll(spec.DllPath)).DllPath;
+                _genshinBridgeDirectory = bridgeDll is null ? null : Path.GetDirectoryName(bridgeDll);
+                OnPropertyChanged(nameof(IsGenshinBridgeRenderScaleAvailable));
+                GenshinBridgeRenderScaleIndex = _savedGenshinBridgeRenderScaleIndex =
+                    OptiScalerRuntime.ReadFsrBridgeRenderScaleIndex(_genshinBridgeDirectory);
                 try
                 {
                     var graphics = GameSettingService.GetGenshinGraphicsSettings(CurrentGameBiz);
@@ -639,9 +652,10 @@ public sealed partial class GameSettingPage : PageBase
             }
             if (IsGraphicsSettingEnable)
             {
-                if (CurrentGameBiz.Game is GameBiz.hkrpg)
+                if (CurrentGameBiz.Game is GameBiz.hkrpg && StarRailFpsIndex != _savedStarRailFpsIndex)
                 {
                     GameSettingService.SetStarRailFPSIndex(CurrentGameBiz, StarRailFpsIndex);
+                    _savedStarRailFpsIndex = StarRailFpsIndex;
                 }
                 if (CurrentGameBiz.Game is GameBiz.hk4e)
                 {
@@ -657,8 +671,15 @@ public sealed partial class GameSettingPage : PageBase
                         throw new InvalidOperationException($"抗锯齿写入后回读不一致：目标 {GenshinGraphicsSettings.AntiAliasingLabels[expectedAa]}，实际索引 {appliedGraphics.AntiAliasingIndex}。");
                     _savedGenshinRenderScaleIndex = GenshinRenderScaleIndex;
                     _savedGenshinAntiAliasingIndex = GenshinAntiAliasingIndex;
-                    if (GenshinBridgeRenderScaleIndex >= 0)
-                        AppConfig.SetGenshinBridgeRenderScaleIndex(CurrentGameId, GenshinBridgeRenderScaleIndex);
+                    if (GenshinBridgeRenderScaleIndex >= 0
+                        && GenshinBridgeRenderScaleIndex != _savedGenshinBridgeRenderScaleIndex)
+                    {
+                        if (!OptiScalerRuntime.SetFsrBridgeRenderScale(_genshinBridgeDirectory,
+                                OptiScalerRuntime.FsrBridgeRenderScales[GenshinBridgeRenderScaleIndex])
+                            || OptiScalerRuntime.ReadFsrBridgeRenderScaleIndex(_genshinBridgeDirectory) != GenshinBridgeRenderScaleIndex)
+                            throw new InvalidOperationException("FSR Bridge 渲染精度保存失败，请检查所选模块目录和写入权限。");
+                        _savedGenshinBridgeRenderScaleIndex = GenshinBridgeRenderScaleIndex;
+                    }
                     AppConfig.EnableGenshinHDR = EnableGenshinHDR;
                     GameSettingService.SetGenshinEnableHDR(CurrentGameBiz, EnableGenshinHDR);
                     AppConfig.SetFpsUnlockTarget(CurrentGameId, (int)FpsUnlockTargetValue);

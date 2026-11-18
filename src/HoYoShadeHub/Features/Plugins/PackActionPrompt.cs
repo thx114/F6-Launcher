@@ -256,9 +256,8 @@ public static class OverlayPackActionPrompter
 
                 if (refreshReimportedPack && refreshGameHints is { Count: > 0 })
                 {
-                    // A successful second import of the same GamePack is a new
-                    // user-authorized batch, even when auto.json has the same hash.
-                    PackOnceLedger.ResetForReimport(packRoot);
+                    // 安装器已在完整目录提交时刷新 once 与应用批次。
+                    // 这里不能提前清账：pending 迁移失败必须保留旧批次的执行记录。
                     PackActionConsent.ResetForReimport(gameKey);
                     _logger.LogInformation("覆盖包重新导入：已刷新 {Game} 的 auto.json 同意和 once 账本", gameKey);
                 }

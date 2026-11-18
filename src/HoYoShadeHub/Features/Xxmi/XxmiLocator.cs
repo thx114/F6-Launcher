@@ -120,7 +120,7 @@ internal sealed class XxmiLocator
     public static void ClearNotFoundCooldown() => _notFoundUntilUtc = DateTime.MinValue;
 
     /// <summary>XXMI 根目录（没有配置 / 启动器 / 任何 MI 实例就不算）</summary>
-    public static string? FindRoot()
+    public static string? FindRoot(bool allowDriveScan = true)
     {
         try
         {
@@ -129,6 +129,17 @@ internal sealed class XxmiLocator
             if (_cachedRoot is not null && IsXxmiRoot(_cachedRoot))
             {
                 return _cachedRoot;
+            }
+
+            // Navigation uses the remembered path and AppData only. Full discovery is explicit.
+            if (!allowDriveScan)
+            {
+                foreach (var special in new[] { Environment.SpecialFolder.ApplicationData, Environment.SpecialFolder.LocalApplicationData })
+                {
+                    string candidate = Path.Combine(Environment.GetFolderPath(special), "XXMI Launcher");
+                    if (IsXxmiRoot(candidate)) return Remember(candidate);
+                }
+                return null;
             }
 
             if (DateTime.UtcNow < _notFoundUntilUtc)
@@ -276,6 +287,7 @@ internal sealed class XxmiLocator
             return list;
         }
 
+        var children = SafeEnumerateDirectories(root).ToArray();
         foreach (string name in ImporterNames)
         {
             string dir = Path.Combine(root, name);
@@ -287,7 +299,7 @@ internal sealed class XxmiLocator
             }
 
             // 版本化目录名：扫根下子目录，找「属于这个 importer」的实例
-            foreach (string sub in SafeEnumerateDirectories(root))
+            foreach (string sub in children)
             {
                 if (Path.GetFileName(sub).Equals(name, StringComparison.OrdinalIgnoreCase))
                 {
@@ -527,7 +539,7 @@ internal sealed class XxmiLocator
     /// 不再拿别的 MI 顶上 —— 以前的回退会把绝区零注进 SRMI、鸣潮注进 ZZMI。
     /// 手动指定（AppConfig）保留，但目录名必须就是期望的 MI 实例名，否则视为配错、记日志忽略。
     /// </summary>
-    public static string? FindInstance(string? gameBiz, string? gameName, out string? importerName)
+    public static string? FindInstance(string? gameBiz, string? gameName, out string? importerName, bool allowDriveScan = true)
     {
         importerName = ImporterForGame(gameBiz, gameName);
 
@@ -554,7 +566,7 @@ internal sealed class XxmiLocator
             }
         }
 
-        string? root = FindRoot();
+        string? root = FindRoot(allowDriveScan);
 
         if (root is null)
         {

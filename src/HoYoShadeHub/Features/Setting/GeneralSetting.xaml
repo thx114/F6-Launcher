@@ -220,6 +220,13 @@
 
             <MenuFlyoutSeparator Margin="0,20,0,0" />
 
+            <ToggleSwitch Margin="0,16,0,0" Header="游戏期间使用轻量模式"
+                          IsOn="{x:Bind GameLightweightMode, Mode=TwoWay}"
+                          OnContent="游戏就绪后卸载界面" OffContent="保留界面进程" />
+            <TextBlock Margin="0,6,0,0" TextWrapping="Wrap"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       Text="游戏结束或点击托盘后恢复界面。最小化会收起到托盘。" />
+
             <!--  透明/动画效果  -->
             <TextBlock Margin="0,20,0,0"
                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"

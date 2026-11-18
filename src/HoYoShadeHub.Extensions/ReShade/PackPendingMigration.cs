@@ -26,11 +26,13 @@ public static class PackPendingMigration
         return migrated;
     }
 
-    public static bool TryMigrate(string sourceRoot, string destinationRoot, out string? error)
+    public static bool TryMigrate(string sourceRoot, string destinationRoot, out string? error,
+        bool removeSource = true, CancellationToken cancellationToken = default)
     {
         string? stage = null;
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
             string source = Path.GetFullPath(sourceRoot).TrimEnd(Path.DirectorySeparatorChar);
             string destination = Path.GetFullPath(destinationRoot).TrimEnd(Path.DirectorySeparatorChar);
             if (source.Equals(destination, StringComparison.OrdinalIgnoreCase)
@@ -52,17 +54,22 @@ public static class PackPendingMigration
             if (directories.Any(IsLedgerName))
                 throw new InvalidDataException("Pending content cannot inject once ledger directories.");
             stage = PackageTree.CreateStage(destination);
-            // Copy bytes rather than hardlink: staging edits must never affect the live destination.
+            // Stage changes always replace paths, never edit linked bytes. Preserve NR topology and avoid a second DLL copy.
             foreach (string directory in originalDirectories)
                 Directory.CreateDirectory(PackageTree.ResolveRelative(stage, directory));
             foreach (var file in original)
-                File.Copy(PackageTree.ResolveRelative(destination, file.Key), PackageTree.ResolveRelative(stage, file.Key));
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                HysxFileLink.LinkOrCopy(PackageTree.ResolveRelative(destination, file.Key), PackageTree.ResolveRelative(stage, file.Key));
+            }
             foreach (string directory in directories)
                 Directory.CreateDirectory(PackageTree.ResolveRelative(stage, directory));
             foreach (var file in before)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 string target = PackageTree.ResolveRelative(stage, file.Key);
-                File.Copy(PackageTree.ResolveRelative(source, file.Key), target, overwrite: true);
+                // 链接/替换不能写穿原文件；NR 同卷硬链接约束也在这里保留。
+                HysxFileLink.LinkOrCopy(PackageTree.ResolveRelative(source, file.Key), target);
                 if (Hash(target) != file.Value) throw new IOException("Pending copy verification failed: " + file.Key);
             }
             Dictionary<string, string> after = Manifest(source);
@@ -80,9 +87,18 @@ public static class PackPendingMigration
                 && (!Same(original, Manifest(destination))
                     || !originalDirectories.SequenceEqual(Directories(destination), StringComparer.OrdinalIgnoreCase))))
                 throw new IOException("Destination changed during pending migration; commit blocked.");
+            // 只有安装器生成的新批次可刷新旧动作账本；无批次的旧 pending 迁移仍保留历史。
+            // 在同一 stage 中提交配置和新身份，失败时 live 目录/账本都不变。
+            if (before.ContainsKey(PackApplicationBatch.FileName)
+                && PackApplicationBatch.ReadIdentity(source) != (existed ? PackApplicationBatch.ReadIdentity(destination) : string.Empty))
+            {
+                string oldLedger = Path.Combine(stage, PackOnceLedger.FileName);
+                if (File.Exists(oldLedger)) File.Delete(oldLedger);
+            }
+            cancellationToken.ThrowIfCancellationRequested();
             PackageTree.Commit(stage, destination);
             stage = null;
-            Directory.Delete(source, recursive: true);
+            if (removeSource) Directory.Delete(source, recursive: true);
             error = null;
             return true;
         }

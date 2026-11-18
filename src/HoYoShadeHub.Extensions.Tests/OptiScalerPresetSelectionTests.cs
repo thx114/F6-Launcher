@@ -10,6 +10,11 @@ namespace HoYoShadeHub
         public static string OptiScalerRootPath { get; set; } = string.Empty;
         public static Dictionary<string, string> Values { get; } = new();
         public static string GetValue(string fallback, string key) => Values.GetValueOrDefault(key, fallback);
+        public static void SetValue(string value, string key) => Values[key] = value;
+        public static string? GetSelectedOptiScalerId(HoYoShadeHub.Core.HoYoPlay.GameId? game)
+            => game is null ? null : Values.GetValueOrDefault("fixture_build_" + game.GameBiz.Value);
+        public static string? GetSelectedOptiScalerDll(HoYoShadeHub.Core.HoYoPlay.GameId? game)
+            => game is null ? null : Values.GetValueOrDefault("fixture_dll_" + game.GameBiz.Value);
     }
 }
 

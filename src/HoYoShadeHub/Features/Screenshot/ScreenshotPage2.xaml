@@ -195,10 +195,14 @@
                                             VerticalAlignment="Center"
                                             ui:VisualExtensions.NormalizedCenterPoint="0.5"
                                             Background="{ThemeResource ControlAltFillColorTertiaryBrush}"
+                                            DataContext="{x:Bind}"
+                                            DataContextChanged="Thumbnail_DataContextChanged"
+                                            EffectiveViewportChanged="Thumbnail_EffectiveViewportChanged"
                                             IsThumbnail="True"
+                                            Loaded="Thumbnail_Loaded"
                                             RenderTransformOrigin="0.5,0.5"
-                                            Source="{x:Bind FilePath}"
-                                            Stretch="UniformToFill">
+                                            Stretch="UniformToFill"
+                                            Unloaded="Thumbnail_Unloaded">
                                 <sc:CachedImage.RenderTransform>
                                     <ScaleTransform />
                                 </sc:CachedImage.RenderTransform>

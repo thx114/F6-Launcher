@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../HoYoShadeHub.Extensions/HoYoShadeHub.Extensions.csproj" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.11" />
+    <Compile Include="../HoYoShadeHub/Features/Xxmi/XxmiLocator.cs" Link="XxmiLocator.cs" />
+    <Compile Include="../HoYoShadeHub/Helpers/CloudProxyManager.cs" Link="CloudProxyManager.cs" />
+  </ItemGroup>
+</Project>

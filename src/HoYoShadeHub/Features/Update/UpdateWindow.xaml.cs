@@ -926,7 +926,7 @@ public sealed partial class UpdateWindow : WindowEx
     private static System.Net.Http.HttpClient CreateGithubApiClient()
     {
         var client = new System.Net.Http.HttpClient();
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("F6Launcher/1.4.8");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd($"F6Launcher/{AppConfig.AppVersion}");
         client.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
         return client;
     }

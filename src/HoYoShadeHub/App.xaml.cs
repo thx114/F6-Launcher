@@ -32,6 +32,7 @@ public partial class App : Application
 
     public App()
     {
+        Features.GameLauncher.BackgroundModeCoordinator.IsGuiProcess = true;
         this.InitializeComponent();
         RequestedTheme = ApplicationTheme.Dark;
         _uiDispatcherQueue = DispatcherQueue.GetForCurrentThread();
@@ -64,7 +65,7 @@ public partial class App : Application
     }
 
 
-    protected override async void OnLaunched(Microsoft.UI.Xaml.LaunchActivatedEventArgs _)
+    protected override async void OnLaunched(Microsoft.UI.Xaml.LaunchActivatedEventArgs launchArgs)
     {
         instance = AppInstance.GetCurrent();
         instance.Activated += AppInstance_Activated;
@@ -112,6 +113,7 @@ public partial class App : Application
         }
 
         StartActivateWatcher();
+        _ = Features.GameLauncher.BackgroundModeCoordinator.InitializeAsync();
     }
 
     private void StartActivateWatcher()
@@ -140,6 +142,7 @@ public partial class App : Application
 
     public void EnsureMainWindow()
     {
+        Features.GameLauncher.BackgroundModeCoordinator.ShowRequested();
         m_MainWindow ??= new MainWindow();
         m_MainWindow.Activate();
         m_MainWindow.Show();

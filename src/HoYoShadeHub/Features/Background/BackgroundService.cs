@@ -9,7 +9,9 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
+using System.Globalization;
 using System.Net.Http;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Windows.Graphics.Imaging;
@@ -26,6 +28,8 @@ public class BackgroundService
     private readonly HoYoPlayService _hoYoPlayService;
 
     private readonly HttpClient _httpClient;
+    private readonly SemaphoreSlim _backgroundMetadataGate = new(1, 1);
+    private static readonly TimeSpan BackgroundMetadataLifetime = TimeSpan.FromHours(6);
 
 
 
@@ -125,22 +129,45 @@ public class BackgroundService
         // 「Unknown launcher id」异常日志。调用方拿不到东西会自己退到兜底背景图。
         if (gameId?.GameBiz.IsKnown() == true)
         {
+            string metadataPath = Path.Combine(AppConfig.UserDataFolder, ".hysx", "backgrounds",
+                Uri.EscapeDataString(gameId.GameBiz.Value) + "." + CultureInfo.CurrentUICulture.Name + ".json");
+            await _backgroundMetadataGate.WaitAsync(cancellationToken);
             try
             {
-                GameBackgroundInfo backgroundInfo = await _hoYoPlayService.GetGameBackgroundAsync(gameId, cancellationToken);
-                backgrounds.AddRange(backgroundInfo?.Backgrounds?.ToList() ?? []);
-
-                GameInfo gameInfo = await _hoYoPlayService.GetGameInfoAsync(gameId, cancellationToken);
-                if (!string.IsNullOrWhiteSpace(gameInfo?.Display?.Background?.Url))
+                var cached = await ReadBackgroundMetadataAsync(metadataPath, cancellationToken);
+                bool fresh = cached.Count > 0 && DateTime.UtcNow - File.GetLastWriteTimeUtc(metadataPath) < BackgroundMetadataLifetime;
+                if (fresh) backgrounds.AddRange(cached);
+                else
                 {
-                    backgrounds.Add(GameBackground.FromPosterUrl(gameInfo.Display.Background.Url));
+                    try
+                    {
+                        GameBackgroundInfo backgroundInfo = await _hoYoPlayService.GetGameBackgroundAsync(gameId, cancellationToken);
+                        backgrounds.AddRange(backgroundInfo?.Backgrounds?.ToList() ?? []);
+                        GameInfo gameInfo = await _hoYoPlayService.GetGameInfoAsync(gameId, cancellationToken);
+                        if (!string.IsNullOrWhiteSpace(gameInfo?.Display?.Background?.Url))
+                            backgrounds.Add(GameBackground.FromPosterUrl(gameInfo.Display.Background.Url));
+                        if (backgrounds.Count > 0)
+                        {
+                            Directory.CreateDirectory(Path.GetDirectoryName(metadataPath)!);
+                            string temporary = metadataPath + ".tmp";
+                            try
+                            {
+                                await File.WriteAllTextAsync(temporary, JsonSerializer.Serialize(backgrounds), cancellationToken);
+                                File.Move(temporary, metadataPath, overwrite: true);
+                            }
+                            finally { if (File.Exists(temporary)) File.Delete(temporary); }
+                        }
+                        else backgrounds.AddRange(cached);
+                    }
+                    catch (OperationCanceledException) { throw; }
+                    catch (Exception ex)
+                    {
+                        if (backgrounds.Count == 0) backgrounds.AddRange(cached);
+                        _logger.LogDebug(ex, "Background metadata refresh failed; keeping local cache for {GameBiz}", gameId.GameBiz);
+                    }
                 }
             }
-            catch (Exception ex)
-            {
-                // 没有官方背景不算错误（测试服 / 还没上架的游戏都会走到这儿）
-                _logger.LogDebug(ex, "No HoYoPlay background for {GameBiz}", gameId.GameBiz);
-            }
+            finally { _backgroundMetadataGate.Release(); }
         }
 
         if (TryGetCustomBgFilePath(gameId, out string? path))
@@ -149,6 +176,18 @@ public class BackgroundService
         }
 
         return backgrounds;
+    }
+
+    private static async Task<List<GameBackground>> ReadBackgroundMetadataAsync(string path, CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (File.Exists(path))
+                return JsonSerializer.Deserialize<List<GameBackground>>(await File.ReadAllTextAsync(path, cancellationToken)) ?? [];
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException) { }
+        return [];
     }
 
 

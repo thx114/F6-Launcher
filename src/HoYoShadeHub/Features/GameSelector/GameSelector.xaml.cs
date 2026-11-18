@@ -175,7 +175,7 @@ public sealed partial class GameSelector : UserControl
         List<GameInfo> gameInfos = GetCachedGameInfos();
         InitializeGameIconsArea(gameInfos);
         InitializeGameServerArea(gameInfos);
-        InitializeInstalledGamesCommand.Execute(null);
+        _installedGamesUpdated = DateTimeOffset.MinValue;
     }
 
 
@@ -201,6 +201,7 @@ public sealed partial class GameSelector : UserControl
     {
         if (!_lifetime.Exit()) return;
         _refresh.Cancel();
+        _initializeInstalledGamesCancellationTokenSource?.Cancel();
         WeakReferenceMessenger.Default.UnregisterAll(this);
         if (_attachedRoot is not null) _attachedRoot.Changed -= XamlRoot_Changed;
         _attachedRoot = null;
@@ -1310,6 +1311,7 @@ public sealed partial class GameSelector : UserControl
 
     private void HideFullBackground()
     {
+        _initializeInstalledGamesCancellationTokenSource?.Cancel();
         Border_FullBackground.Opacity = 0;
         Border_FullBackground.IsHitTestVisible = false;
         Border_FullBackground.Visibility = Visibility.Collapsed;
@@ -1637,7 +1639,8 @@ public sealed partial class GameSelector : UserControl
                     icon.UpdateInfo(info);
                 }
             }
-            if (operation.IsCurrent) await InitializeInstalledGamesCommand.ExecuteAsync(null);
+            // 网络元数据刷新不应触发游戏目录的递归空间扫描。
+            _installedGamesUpdated = DateTimeOffset.MinValue;
         }
         catch { }
     }
@@ -1786,6 +1789,7 @@ public sealed partial class GameSelector : UserControl
 
 
     private CancellationTokenSource? _initializeInstalledGamesCancellationTokenSource;
+    private DateTimeOffset _installedGamesUpdated;
 
 
     /// <summary>
@@ -1796,79 +1800,49 @@ public sealed partial class GameSelector : UserControl
     private async Task InitializeInstalledGamesAsync()
     {
         const double GB = 1 << 30;
+        if (!_lifetime.IsActive) return;
+        _initializeInstalledGamesCancellationTokenSource?.Cancel();
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+        _initializeInstalledGamesCancellationTokenSource = cancellation;
+        CancellationToken token = cancellation.Token;
+        var timer = Stopwatch.StartNew();
         try
         {
-            _initializeInstalledGamesCancellationTokenSource?.Cancel();
-            _initializeInstalledGamesCancellationTokenSource = new();
-            CancellationToken token = _initializeInstalledGamesCancellationTokenSource.Token;
-
+            // 在 UI 上只捕获身份；路径探测、递归、大小和硬链接统计全部在后台完成。
+            var servers = GameBizDisplays.SelectMany(display => display.Servers
+                .Select(server => (Group: display.GameInfo.GameBiz.ToGame().Value, Icon: server,
+                    CustomPath: server.IsCustom ? server.CustomEntry?.GameDirectory : null,
+                    Id: new GameId { Id = server.GameId.Id, GameBiz = server.GameId.GameBiz })))
+                .DistinctBy(x => x.Id.Id).ToArray();
+            var sizes = await Task.Run(() => InstalledGameSizeScanner.Measure(servers
+                .Select(x => new InstalledGameDirectory(x.Id.Id, x.Group,
+                    x.CustomPath ?? GameLauncherService.GetGameInstallPath(x.Id)))
+                .ToArray(), token), token);
+            token.ThrowIfCancellationRequested();
             InstalledGames.Clear();
-            InstalledGamesActualSize = null;
-            InstalledGamesSavedSize = null;
-            List<FileInfo> files = new();
-
-            foreach (GameBizDisplay display in GameBizDisplays)
+            foreach (var size in sizes.Games)
             {
-                List<FileInfo> _duplicateFiles = new();
-                int serverCount = 0;
-                foreach (GameBizIcon server in display.Servers)
-                {
-                    string? installPath = GameLauncherService.GetGameInstallPath(server.GameId);
-                    if (Directory.Exists(installPath))
-                    {
-                        server.InstallPath = installPath;
-                        var _files = new DirectoryInfo(installPath).EnumerateFiles("*", SearchOption.AllDirectories).ToList();
-                        server.TotalSize = _files.Sum(x => x.Length);
-                        InstalledGames.Add(server);
-                        if (_files.Count() > 0)
-                        {
-                            serverCount++;
-                            _duplicateFiles.AddRange(_files);
-                        }
-                    }
-                }
-                if (serverCount > 1)
-                {
-                    files.AddRange(_duplicateFiles);
-                }
+                var icon = servers.First(x => x.Id.Id == size.Id).Icon;
+                icon.InstallPath = size.Path;
+                icon.TotalSize = size.Bytes;
+                InstalledGames.Add(icon);
             }
-            long totalSize = InstalledGames.Sum(x => x.TotalSize);
-            InstalledGamesActualSize = $"{totalSize / GB:F2}GB";
-
-            if (token.IsCancellationRequested)
-            {
-                return;
-            }
-
-            if (files.Count > 0)
-            {
-                (long fileSize, long actualSize) = await Task.Run(() =>
-                {
-                    long size = 0;
-                    Dictionary<string, long> dic = new();
-                    foreach (var file in files)
-                    {
-                        size += file.Length;
-                        using var handle = File.OpenHandle(file.FullName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-                        var idInfo = Kernel32.GetFileInformationByHandleEx<Kernel32.FILE_ID_INFO>(handle, Kernel32.FILE_INFO_BY_HANDLE_CLASS.FileIdInfo);
-                        var idInfoBytes = MemoryMarshal.AsBytes(MemoryMarshal.CreateReadOnlySpan(ref idInfo, 1));
-                        dic[Convert.ToHexString(idInfoBytes)] = file.Length;
-                    }
-                    return (size, dic.Values.Sum());
-                }, token);
-
-                if (token.IsCancellationRequested)
-                {
-                    return;
-                }
-
-                InstalledGamesActualSize = $"{(totalSize - fileSize + actualSize) / GB:F2}GB";
-                InstalledGamesSavedSize = $"{(fileSize - actualSize) / GB:F2}GB";
-            }
+            InstalledGamesActualSize = $"{sizes.ActualBytes / GB:F2}GB";
+            InstalledGamesSavedSize = sizes.LogicalBytes > sizes.ActualBytes
+                ? $"{(sizes.LogicalBytes - sizes.ActualBytes) / GB:F2}GB" : null;
+            _installedGamesUpdated = DateTimeOffset.UtcNow;
+            _logger.LogInformation("Installed game sizes: count={Count}, backgroundMs={Elapsed:F1}",
+                sizes.Games.Count, timer.Elapsed.TotalMilliseconds);
         }
+        catch (OperationCanceledException) { }
         catch (Exception ex)
         {
-            Debug.WriteLine(ex);
+            _logger.LogWarning(ex, "Calculate installed game sizes");
+        }
+        finally
+        {
+            if (ReferenceEquals(_initializeInstalledGamesCancellationTokenSource, cancellation))
+                _initializeInstalledGamesCancellationTokenSource = null;
         }
     }
 
@@ -2111,6 +2085,8 @@ public sealed partial class GameSelector : UserControl
     /// <summary>「已装游戏」平时收在 Expander 里，展开的时候让它有顺序地露出来。</summary>
     private void Expander_InstalledGames_Expanding(Expander sender, ExpanderExpandingEventArgs args)
     {
+        if (DateTimeOffset.UtcNow - _installedGamesUpdated > TimeSpan.FromMinutes(10))
+            InitializeInstalledGamesCommand.Execute(null);
         DispatcherQueue.TryEnqueue(() => MotionAnimations.PlayListEntrance(ItemsControl_InstalledGames, pointerScale: true));
     }
 

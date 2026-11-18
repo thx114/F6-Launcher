@@ -25,9 +25,14 @@ internal static class ImageThumbnail
     private static readonly string CacheFolder = Path.Combine(AppConfig.CacheFolder, "thumb");
 
 
-    public static readonly bool AvifDecoderSupported;
+    public static bool AvifDecoderSupported => DecoderSupport.IsValueCreated &&
+        DecoderSupport.Value.IsCompletedSuccessfully && DecoderSupport.Value.Result.Avif;
 
-    public static readonly bool JxlDecoderSupported;
+    public static bool JxlDecoderSupported => DecoderSupport.IsValueCreated &&
+        DecoderSupport.Value.IsCompletedSuccessfully && DecoderSupport.Value.Result.Jxl;
+
+    private static readonly Lazy<Task<(bool Avif, bool Jxl)>> DecoderSupport = new(
+        () => Task.Run(ProbeDecoderSupportAsync));
 
 
     private const string AvifImageBase64 = "AAAAHGZ0eXBhdmlmAAAAAGF2aWZtaWYxbWlhZgAAAOltZXRhAAAAAAAAACFoZGxyAAAAAAAAAABwaWN0AAAAAAAAAAAAAAAAAAAAAA5waXRtAAAAAAABAAAAHmlsb2MAAAAARAAAAQABAAAAAQAAAQ0AAAASAAAAKGlpbmYAAAAAAAEAAAAaaW5mZQIAAAAAAQAAYXYwMUNvbG9yAAAAAGhpcHJwAAAASWlwY28AAAAUaXNwZQAAAAAAAAABAAAAAQAAAA5waXhpAAAAAAEIAAAADGF2MUOBABwAAAAAE2NvbHJuY2x4AAEAAAABgAAAABdpcG1hAAAAAAAAAAEAAQQBAoMEAAAAGm1kYXQSAAoEGAAGVTIIH/AAAQACH8A=";
@@ -41,22 +46,26 @@ internal static class ImageThumbnail
     private static readonly SemaphoreSlim Semaphore = new(Math.Clamp(Environment.ProcessorCount / 2, 1, int.MaxValue));
 
 
-    static ImageThumbnail()
+    private static async Task<(bool Avif, bool Jxl)> ProbeDecoderSupportAsync()
     {
+        bool avif = false, jxl = false;
         try
         {
             var bytes = Convert.FromBase64String(AvifImageBase64);
-            BitmapDecoder.CreateAsync(new MemoryStream(bytes).AsRandomAccessStream()).AsTask().Wait();
-            AvifDecoderSupported = true;
+            using var stream = new MemoryStream(bytes);
+            await BitmapDecoder.CreateAsync(stream.AsRandomAccessStream()).AsTask().ConfigureAwait(false);
+            avif = true;
         }
         catch { }
         try
         {
             var bytes = Convert.FromBase64String(JxlImageBase64);
-            BitmapDecoder.CreateAsync(new MemoryStream(bytes).AsRandomAccessStream()).AsTask().Wait();
-            JxlDecoderSupported = true;
+            using var stream = new MemoryStream(bytes);
+            await BitmapDecoder.CreateAsync(stream.AsRandomAccessStream()).AsTask().ConfigureAwait(false);
+            jxl = true;
         }
         catch { }
+        return (avif, jxl);
     }
 
 
@@ -66,7 +75,7 @@ internal static class ImageThumbnail
     {
         string fileName = GetCachedThumbnailName(path);
         string cachePath = Path.Combine(CacheFolder, fileName);
-        if (File.Exists(cachePath))
+        if (await Task.Run(() => File.Exists(cachePath), cancellationToken))
         {
             return new BitmapImage(new Uri(cachePath));
         }
@@ -75,6 +84,8 @@ internal static class ImageThumbnail
         {
             await Task.Delay(300, cancellationToken);
             string extension = Path.GetExtension(path).ToLowerInvariant();
+            if (extension is ".avif" or ".jxl")
+                await DecoderSupport.Value.WaitAsync(cancellationToken);
             if (!AvifDecoderSupported && extension is ".avif")
             {
                 return await LoadAvifImageAsync(path, cachePath, cancellationToken);

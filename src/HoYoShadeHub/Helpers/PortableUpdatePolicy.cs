@@ -1,11 +1,40 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace HoYoShadeHub.Helpers;
 
 internal static class PortableUpdatePolicy
 {
+    // Installation and retirement share one lock, including the final version.ini switch.
+    internal static FileStream? TryAcquireMaintenance(string root)
+    {
+        string directory = GetArchiveTarget(root, ".hysx");
+        Directory.CreateDirectory(directory);
+        string path = GetArchiveTarget(root, ".hysx/portable-maintenance.lock");
+        try
+        {
+            return new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        }
+        catch (IOException ex) when ((ex.HResult & 0xFFFF) is 32 or 33)
+        {
+            return null;
+        }
+    }
+
+    internal static async Task<FileStream> AcquireMaintenanceAsync(string root, CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            FileStream? lease = TryAcquireMaintenance(root);
+            if (lease is not null) return lease;
+            await Task.Delay(100, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
     internal static string GetArchiveTarget(string root, string entryName)
     {
         string relative = entryName.Replace('\\', '/');

@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../HoYoShadeHub.Extensions/HoYoShadeHub.Extensions.csproj" />
+    <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="9.0.11" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.11" />
+    <PackageReference Include="Vanara.PInvoke.SetupAPI" Version="4.2.1" />
+    <Compile Include="../HoYoShadeHub/Features/HoYoPlay/HoYoPlayService.cs" Link="HoYoPlayService.cs" />
+  </ItemGroup>
+</Project>

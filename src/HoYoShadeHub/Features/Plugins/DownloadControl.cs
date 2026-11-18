@@ -1,4 +1,5 @@
 using HoYoShadeHub.Extensions.Services;
+using HoYoShadeHub.Core.Networking;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using System;
@@ -36,6 +37,7 @@ public sealed class DownloadJob : IDisposable
 
     private DownloadJob(ProgressBar? bar, TextBlock? status, Button? cancelButton, string label)
     {
+        BackgroundOperationActivity.SetCurrentName(label);
         _bar = bar;
         _status = status;
         _cancelButton = cancelButton;

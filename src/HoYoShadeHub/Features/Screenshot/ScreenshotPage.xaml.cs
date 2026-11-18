@@ -6,6 +6,7 @@ using Microsoft.UI.Xaml.Data;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Navigation;
 using HoYoShadeHub.Core;
+using HoYoShadeHub.Controls;
 using HoYoShadeHub.Features.GameLauncher;
 using HoYoShadeHub.Features.HoYoPlay;
 using HoYoShadeHub.Frameworks;
@@ -17,6 +18,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Windows.ApplicationModel.DataTransfer;
@@ -65,14 +67,17 @@ public sealed partial class ScreenshotPage : PageBase
 
     protected override async void OnLoaded()
     {
-        await Task.Delay(16);
-        Initialize();
+        await InitializeAsync();
     }
 
 
 
     protected override void OnUnloaded()
     {
+        _screenshotLoad?.Cancel();
+        _screenshotLoad?.Dispose();
+        _screenshotLoad = null;
+        ++_screenshotRevision;
         try
         {
             foreach (var item in _watchers)
@@ -81,9 +86,7 @@ public sealed partial class ScreenshotPage : PageBase
             }
             _watchers.Clear();
             _folders.Clear();
-            _folders = null!;
             _screenshotDict.Clear();
-            _screenshotDict = null!;
             _screenshotItems = null;
             ScreenshotGroups = null!;
             ScreenshotViewSource.Source = null;
@@ -110,6 +113,21 @@ public sealed partial class ScreenshotPage : PageBase
 
     private List<FileSystemWatcher> _watchers = new();
 
+    private CancellationTokenSource? _screenshotLoad;
+    private int _screenshotRevision;
+
+    private void Thumbnail_EffectiveViewportChanged(FrameworkElement sender, EffectiveViewportChangedEventArgs args) =>
+        ScreenshotThumbnailViewport.UpdateViewport((CachedImage)sender, args);
+
+    private void Thumbnail_Loaded(object sender, RoutedEventArgs args) =>
+        ScreenshotThumbnailViewport.Refresh((CachedImage)sender);
+
+    private void Thumbnail_DataContextChanged(FrameworkElement sender, DataContextChangedEventArgs args) =>
+        ScreenshotThumbnailViewport.Refresh((CachedImage)sender);
+
+    private void Thumbnail_Unloaded(object sender, RoutedEventArgs args) =>
+        ScreenshotThumbnailViewport.SetVisible((CachedImage)sender, false);
+
     private List<ScreenshotFolder> _folders = new();
 
     // FileSystemWatcher 的回调在线程池线程上跑（每个截图目录一个 watcher），会并发碰这个字典 —— 必须线程安全
@@ -122,101 +140,69 @@ public sealed partial class ScreenshotPage : PageBase
     public ObservableCollection<ScreenshotItemGroup> ScreenshotGroups { get; set { if (SetProperty(ref field, value)) { ScreenshotViewSource.Source = value; } } }
 
 
-    private async void Initialize()
+    private bool IsScreenshotLoadCurrent(int revision, CancellationToken token) =>
+        !token.IsCancellationRequested && revision == _screenshotRevision && IsLoaded;
+
+    private async Task InitializeAsync()
     {
+        if (!IsLoaded) return;
+        _screenshotLoad?.Cancel();
+        _screenshotLoad?.Dispose();
+        _screenshotLoad = CancellationTokenSource.CreateLinkedTokenSource(PageCancellationToken);
+        CancellationToken token = _screenshotLoad.Token;
+        int revision = ++_screenshotRevision;
+        var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        List<FileSystemWatcher> pendingWatchers = new();
         try
         {
             foreach (var item in _watchers)
             {
                 item.Dispose();
             }
+            _watchers.Clear();
             _folders.Clear();
             _screenshotDict.Clear();
             ScreenshotGroups = null!;
 
-            (string? defaultFolder, string? inGameFolder) = await GetGameScreenshotPathAsync();
-            if (defaultFolder is not null)
-            {
-                string folder = Path.GetFullPath(defaultFolder);
-                if (_folders.FirstOrDefault(x => x.Folder == folder) is null)
-                {
-                    var watcher = CreateFileSystemWatcher(folder);
-                    _watchers.Add(watcher);
-                    _folders.Add(new(folder) { Default = true });
-                }
-            }
-            if (inGameFolder is not null)
-            {
-                string folder = Path.GetFullPath(inGameFolder);
-                if (_folders.FirstOrDefault(x => x.Folder == folder) is null)
-                {
-                    var watcher = CreateFileSystemWatcher(folder);
-                    _watchers.Add(watcher);
-                    _folders.Add(new(folder) { InGame = true });
-                }
-            }
-            
-            // 自动添加HoYoShade和OpenHoYoShade的截图文件夹
-            AddShaderScreenshotFolders();
-
             string? externalFolder = AppConfig.GetExternalScreenshotFolder(CurrentGameBiz);
-            if (!string.IsNullOrWhiteSpace(externalFolder))
-            {
-                foreach (var item in externalFolder.Split(';'))
-                {
-                    string folder = item.Trim();
-                    if (Directory.Exists(folder))
-                    {
-                        folder = Path.GetFullPath(folder);
-                        if (_folders.FirstOrDefault(x => x.Folder == folder) is null)
-                        {
-                            var watcher = CreateFileSystemWatcher(folder);
-                            _watchers.Add(watcher);
-                            _folders.Add(new(folder));
-                        }
-                    }
-                }
-            }
-
-            List<ScreenshotItem> screenshots = new();
-            foreach (var folderItem in _folders)
-            {
-                var files = Directory.GetFiles(folderItem.Folder);
-                foreach (var file in files)
-                {
-                    string name = Path.GetFileName(file);
-                    if (_screenshotDict.ContainsKey(name))
-                    {
-                        continue;
-                    }
-                    // todo 优化加载速度
-                    if (ScreenshotHelper.IsSupportedExtension(file) /*&& !File.GetAttributes(file).HasFlag((System.IO.FileAttributes)0x440000)*/)
-                    {
-                        var item = new ScreenshotItem(file);
-                        screenshots.Add(item);
-                        _screenshotDict[name] = item;
-                    }
-                }
-            }
-
-            _screenshotItems = new(screenshots.OrderByDescending(x => x.CreationTime).ToList());
-            var groups = _screenshotItems.GroupBy(x => x.TimeMonthDay).Select(x => new ScreenshotItemGroup(x.Key, x)).ToList();
-            ScreenshotGroups = new(groups);
+            string? userDataFolder = AppConfig.UserDataFolder;
+            (string? defaultFolder, string? inGameFolder) = await GetGameScreenshotPathAsync(token);
+            var snapshot = await Task.Run(() => ScreenshotDirectorySnapshot.Read(
+                defaultFolder, inGameFolder, userDataFolder, externalFolder, false, token,
+                folder => pendingWatchers.Add(CreateFileSystemWatcher(folder, token, revision, ready.Task))), token);
+            if (!IsScreenshotLoadCurrent(revision, token)) return;
+            _folders = snapshot.Folders;
+            _screenshotDict = snapshot.ByName;
+            _screenshotItems = snapshot.Items;
+            ScreenshotGroups = snapshot.Groups;
+            _watchers = pendingWatchers;
+            pendingWatchers = new();
+            ready.TrySetResult();
+            foreach (var error in snapshot.Errors)
+                _logger.LogWarning(error.Error, "Read screenshot directory {Path}", error.Path);
+            UpdateSelectCountText();
         }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Initialize");
         }
+        finally
+        {
+            ready.TrySetCanceled();
+            foreach (var watcher in pendingWatchers) watcher.Dispose();
+        }
     }
 
 
-    public async Task<(string? BackupFolder, string? ScreenshotFolder)> GetGameScreenshotPathAsync()
+    public async Task<(string? BackupFolder, string? ScreenshotFolder)> GetGameScreenshotPathAsync(CancellationToken token = default)
     {
         try
         {
-            string? backupFolder = null, screenshotFolder = null;
-            string? name = GameLauncherService.GetGameExeName(CurrentGameBiz)?.Replace(".exe", "");
-            string? relativePath = CurrentGameBiz.Game switch
+            var gameId = CurrentGameId;
+            var gameBiz = CurrentGameBiz;
+            string? name = GameLauncherService.GetGameExeName(gameBiz)?.Replace(".exe", "");
+            string? relativePath = gameBiz.Game switch
             {
                 GameBiz.hk4e => "ScreenShot",
                 GameBiz.hkrpg => @"StarRail_Data\ScreenShots",
@@ -226,7 +212,7 @@ public sealed partial class ScreenshotPage : PageBase
             };
             if (name is null || relativePath is null)
             {
-                var config = await _hoyoplayService.GetGameConfigAsync(CurrentGameId);
+                var config = await _hoyoplayService.GetGameConfigAsync(gameId).WaitAsync(token);
                 if (config is not null)
                 {
                     name ??= config.ExeFileName.Replace(".exe", "");
@@ -234,18 +220,11 @@ public sealed partial class ScreenshotPage : PageBase
                 }
             }
             
-            // 不再为游戏单独创建截图文件夹，而是使用shader框架的截图文件夹
-            // 如果HoYoShade/OpenHoYoShade未安装，backupFolder将为null
-            backupFolder = null;
-            
-            string? installPath = GameLauncherService.GetGameInstallPath(CurrentGameId);
-            string folder = Path.Join(installPath, relativePath);
-            if (Directory.Exists(folder))
-            {
-                screenshotFolder = folder;
-            }
-            return (backupFolder, screenshotFolder);
+            token.ThrowIfCancellationRequested();
+            string? installPath = GameLauncherService.GetGameInstallPath(gameId);
+            return (null, string.IsNullOrWhiteSpace(installPath) || relativePath is null ? null : Path.Join(installPath, relativePath));
         }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Get game screenshot path");
@@ -254,7 +233,7 @@ public sealed partial class ScreenshotPage : PageBase
     }
 
 
-    private FileSystemWatcher CreateFileSystemWatcher(string folder)
+    private FileSystemWatcher CreateFileSystemWatcher(string folder, CancellationToken token, int revision, Task ready)
     {
         var watcher = new FileSystemWatcher(folder);
         watcher.NotifyFilter = NotifyFilters.FileName;
@@ -262,100 +241,44 @@ public sealed partial class ScreenshotPage : PageBase
         {
             watcher.Filters.Add(item);
         }
-        watcher.Created += FileSystemWatcher_Created;
-        watcher.Deleted += FileSystemWatcher_Deleted;
+        watcher.Created += (_, e) => FileSystemWatcher_Created(e, token, revision, ready);
+        watcher.Deleted += (_, e) => FileSystemWatcher_Deleted(e, token, revision, ready);
         watcher.EnableRaisingEvents = true;
         return watcher;
     }
     
     
-    private void AddShaderScreenshotFolders()
+    private async void FileSystemWatcher_Created(FileSystemEventArgs e, CancellationToken token, int revision, Task ready)
     {
         try
         {
-            if (string.IsNullOrWhiteSpace(AppConfig.UserDataFolder))
+            await ready.WaitAsync(token);
+            if (ScreenshotHelper.IsSupportedExtension(e.FullPath) && File.Exists(e.FullPath))
             {
-                return;
-            }
-
-            // 检测HoYoShade是否安装
-            string hoYoShadePath = Path.Combine(AppConfig.UserDataFolder, "HoYoShade");
-            if (Directory.Exists(hoYoShadePath))
-            {
-                string hoYoShadeScreenshotPath = Path.Combine(hoYoShadePath, "ScreenShot");
-                if (Directory.Exists(hoYoShadeScreenshotPath))
-                {
-                    string folder = Path.GetFullPath(hoYoShadeScreenshotPath);
-                    if (_folders.FirstOrDefault(x => x.Folder == folder) is null)
-                    {
-                        var watcher = CreateFileSystemWatcher(folder);
-                        _watchers.Add(watcher);
-                        _folders.Add(new(folder) { Default = false });
-                        _logger.LogInformation("Added HoYoShade screenshot folder: {Path}", folder);
-                    }
-                }
-            }
-
-            // 检测OpenHoYoShade是否安装
-            string openHoYoShadePath = Path.Combine(AppConfig.UserDataFolder, "OpenHoYoShade");
-            if (Directory.Exists(openHoYoShadePath))
-            {
-                string openHoYoShadeScreenshotPath = Path.Combine(openHoYoShadePath, "ScreenShot");
-                if (Directory.Exists(openHoYoShadeScreenshotPath))
-                {
-                    string folder = Path.GetFullPath(openHoYoShadeScreenshotPath);
-                    if (_folders.FirstOrDefault(x => x.Folder == folder) is null)
-                    {
-                        var watcher = CreateFileSystemWatcher(folder);
-                        _watchers.Add(watcher);
-                        _folders.Add(new(folder) { Default = false });
-                        _logger.LogInformation("Added OpenHoYoShade screenshot folder: {Path}", folder);
-                    }
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Add shader screenshot folders");
-        }
-    }
-
-
-    private async void FileSystemWatcher_Created(object sender, FileSystemEventArgs e)
-    {
-        try
-        {
-            if (e.ChangeType == WatcherChangeTypes.Created)
-            {
+                await ScreenshotHelper.WaitForFileReleaseAsync(e.FullPath, token);
+                token.ThrowIfCancellationRequested();
+                var item = new ScreenshotItem(e.FullPath);
                 string name = Path.GetFileName(e.FullPath);
-                if (_screenshotDict.ContainsKey(name))
+                DispatcherQueue.TryEnqueue(() =>
                 {
-                    return;
-                }
-                if (ScreenshotHelper.IsSupportedExtension(e.FullPath) && File.Exists(e.FullPath))
-                {
-                    await ScreenshotHelper.WaitForFileReleaseAsync(e.FullPath, CancellationToken.None);
-                    var item = new ScreenshotItem(e.FullPath);
-                    _screenshotDict[name] = item;
-                    DispatcherQueue.TryEnqueue(() =>
+                    if (!IsScreenshotLoadCurrent(revision, token) || !_screenshotDict.TryAdd(name, item)) return;
+                    ScreenshotGroups ??= new();
+                    _screenshotItems ??= new();
+                    _screenshotItems.Insert(0, item);
+                    if (ScreenshotGroups.FirstOrDefault(x => x.Header == item.TimeMonthDay) is ScreenshotItemGroup group)
                     {
-                        ScreenshotGroups ??= new();
-                        _screenshotItems ??= new();
-                        _screenshotItems.Insert(0, item);
-                        if (ScreenshotGroups.FirstOrDefault(x => x.Header == item.TimeMonthDay) is ScreenshotItemGroup group)
-                        {
-                            group.Insert(0, item);
-                        }
-                        else
-                        {
-                            var newGroup = new ScreenshotItemGroup(item.TimeMonthDay, [item]);
-                            ScreenshotGroups.Insert(0, newGroup);
-                        }
-                        UpdateSelectCountText();
-                    });
-                }
+                        group.Insert(0, item);
+                    }
+                    else
+                    {
+                        var newGroup = new ScreenshotItemGroup(item.TimeMonthDay, [item]);
+                        ScreenshotGroups.Insert(0, newGroup);
+                    }
+                    UpdateSelectCountText();
+                });
             }
         }
+        catch (OperationCanceledException) when (token.IsCancellationRequested || ready.IsCanceled) { }
         catch (Exception ex)
         {
             _logger.LogError(ex, "File system watcher created event");
@@ -363,34 +286,34 @@ public sealed partial class ScreenshotPage : PageBase
     }
 
 
-    private void FileSystemWatcher_Deleted(object sender, FileSystemEventArgs e)
+    private async void FileSystemWatcher_Deleted(FileSystemEventArgs e, CancellationToken token, int revision, Task ready)
     {
         try
         {
+            await ready.WaitAsync(token);
             string name = Path.GetFileName(e.FullPath);
-            if (_screenshotDict.TryGetValue(name, out ScreenshotItem? item))
+            DispatcherQueue.TryEnqueue(() =>
             {
-                if (e.FullPath == item.FilePath)
+                if (!IsScreenshotLoadCurrent(revision, token)) return;
+                if (_screenshotDict.TryGetValue(name, out ScreenshotItem? item) &&
+                    string.Equals(e.FullPath, item.FilePath, StringComparison.OrdinalIgnoreCase))
                 {
                     if (ScreenshotGroups?.FirstOrDefault(x => x.Header == item.TimeMonthDay) is ScreenshotItemGroup group)
                     {
                         if (group.Contains(item))
                         {
-                            _screenshotDict.TryRemove(item.Name, out _);
-                            DispatcherQueue.TryEnqueue(() =>
+                            _screenshotDict.TryRemove(name, out _);
+                            _screenshotItems?.Remove(item);
+                            group.Remove(item);
+                            if (group.Count == 0)
                             {
-                                _screenshotItems?.Remove(item);
-                                group.Remove(item);
-                                if (group.Count == 0)
-                                {
-                                    ScreenshotGroups.Remove(group);
-                                }
-                                UpdateSelectCountText();
-                            });
+                                ScreenshotGroups.Remove(group);
+                            }
+                            UpdateSelectCountText();
                         }
                     }
                 }
-            }
+            });
         }
         catch { }
     }
@@ -428,7 +351,7 @@ public sealed partial class ScreenshotPage : PageBase
             {
                 string folder = string.Join(';', dialog.Folders.Where(x => x.CanRemove).Select(x => x.Folder));
                 AppConfig.SetExternalScreenshotFolder(CurrentGameBiz, folder);
-                Initialize();
+                await InitializeAsync();
                 UpdateSelectCountText();
             }
         }
@@ -746,4 +669,106 @@ public sealed partial class ScreenshotPage : PageBase
     }
 
 
+}
+
+// Plain data only: both screenshot layouts share one worker-side enumeration,
+// metadata and sorting boundary. No image decoding or XAML objects are created.
+internal sealed class ScreenshotDirectorySnapshot
+{
+    public List<ScreenshotFolder> Folders { get; } = new();
+    public ConcurrentDictionary<string, ScreenshotItem> ByName { get; } = new(StringComparer.OrdinalIgnoreCase);
+    public ObservableCollection<ScreenshotItem> Items { get; private set; } = new();
+    public ObservableCollection<ScreenshotItemGroup> Groups { get; private set; } = new();
+    public List<(string Path, Exception Error)> Errors { get; } = new();
+
+    public static ScreenshotDirectorySnapshot Read(string? backup, string? inGame, string? userData,
+        string? external, bool skipRecallFiles, CancellationToken token, Action<string>? watch = null, bool groupItems = true)
+    {
+        var snapshot = new ScreenshotDirectorySnapshot();
+        var seenFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        void AddFolder(string? path, bool isDefault = false, bool isInGame = false)
+        {
+            token.ThrowIfCancellationRequested();
+            if (string.IsNullOrWhiteSpace(path)) return;
+            try
+            {
+                string fullPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+                if (Directory.Exists(fullPath) && seenFolders.Add(fullPath))
+                    snapshot.Folders.Add(new(fullPath) { Default = isDefault, InGame = isInGame });
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+            { snapshot.Errors.Add((path, ex)); }
+        }
+        AddFolder(backup, isDefault: true);
+        AddFolder(inGame, isInGame: true);
+        if (!string.IsNullOrWhiteSpace(userData))
+        {
+            AddFolder(Path.Combine(userData, "HoYoShade", "ScreenShot"));
+            AddFolder(Path.Combine(userData, "OpenHoYoShade", "ScreenShot"));
+        }
+        foreach (string path in external?.Split(';') ?? Array.Empty<string>()) AddFolder(path.Trim());
+        foreach (var folder in snapshot.Folders)
+        {
+            token.ThrowIfCancellationRequested();
+            try
+            {
+                // Start watching before enumeration; callbacks await the snapshot's
+                // UI commit, so file arrivals cannot race collection construction.
+                try { watch?.Invoke(folder.Folder); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+                { snapshot.Errors.Add((folder.Folder, ex)); }
+                foreach (string file in Directory.EnumerateFiles(folder.Folder))
+                {
+                    token.ThrowIfCancellationRequested();
+                    string name = Path.GetFileName(file);
+                    if (snapshot.ByName.ContainsKey(name) || !ScreenshotHelper.IsSupportedExtension(file)) continue;
+                    try
+                    {
+                        if (skipRecallFiles && (File.GetAttributes(file) & (System.IO.FileAttributes)0x440000) != 0) continue;
+                        snapshot.ByName.TryAdd(name, new ScreenshotItem(file));
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                    { snapshot.Errors.Add((file, ex)); }
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+            { snapshot.Errors.Add((folder.Folder, ex)); }
+        }
+        token.ThrowIfCancellationRequested();
+        var ordered = snapshot.ByName.Values.OrderByDescending(item => item.CreationTime).ToList();
+        token.ThrowIfCancellationRequested();
+        snapshot.Items = new(ordered);
+        if (groupItems)
+            snapshot.Groups = new(ordered.GroupBy(item => item.TimeMonthDay)
+                .Select(group => new ScreenshotItemGroup(group.Key, group)));
+        return snapshot;
+    }
+}
+
+internal static class ScreenshotThumbnailViewport
+{
+    private sealed class State { public bool Visible; }
+    private static readonly ConditionalWeakTable<CachedImage, State> States = new();
+
+    public static void UpdateViewport(CachedImage image, EffectiveViewportChangedEventArgs args)
+    {
+        var viewport = args.EffectiveViewport;
+        SetVisible(image, viewport.Width > 0 && viewport.Height > 0 &&
+            viewport.Right > 0 && viewport.Bottom > 0 &&
+            viewport.X < image.ActualWidth && viewport.Y < image.ActualHeight);
+    }
+
+    public static void SetVisible(CachedImage image, bool visible)
+    {
+        States.GetValue(image, static _ => new State()).Visible = visible;
+        Refresh(image);
+    }
+
+    public static void Refresh(CachedImage image)
+    {
+        var state = States.GetValue(image, static _ => new State());
+        // Source changes cancel ImageEx's obsolete request. Off-screen containers
+        // keep their data identity, but no bitmap or pending thumbnail request.
+        image.Source = state.Visible && image.IsLoaded && image.DataContext is ScreenshotItem item ? item.FilePath : null;
+    }
 }

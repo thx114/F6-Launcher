@@ -23,6 +23,8 @@ HoYoShade Hub 的非官方 DLSS5 分支，用于管理米哈游/自定义游戏�
 
 ## 下载与更新
 
+当前版本为 **1.4.9**，包含游戏精度保护、原生轻量托盘、覆盖包按导入批次应用及 Rocket 角色预览。详情见 [1.4.9 更新说明](release-notes/1.4.9.md)。
+
 从 [Releases](https://github.com/thx114/F6-Launcher/releases) 下载
 `F6Launcher_Portable_<版本>_x64.zip`，解压到便携版目录并覆盖旧文件。
 

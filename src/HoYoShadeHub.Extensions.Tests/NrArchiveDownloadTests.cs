@@ -37,6 +37,8 @@ internal static class NrArchiveDownloadTests
                 using var listener = new TcpListener(IPAddress.Loopback, 0);
                 listener.Start();
                 int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+                var connected = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                var sendBody = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                 var server = Task.Run(async () =>
                 {
                     using var client = await listener.AcceptTcpClientAsync();
@@ -44,15 +46,25 @@ internal static class NrArchiveDownloadTests
                     using var reader = new StreamReader(stream, Encoding.ASCII, false, 1024, true);
                     while (!string.IsNullOrEmpty(await reader.ReadLineAsync())) { }
                     await stream.WriteAsync(Encoding.ASCII.GetBytes($"HTTP/1.1 200 OK\r\nContent-Length: {payload.Length}\r\nConnection: close\r\n\r\n"));
+                    await stream.FlushAsync();
+                    connected.TrySetResult();
+                    await sendBody.Task.WaitAsync(TimeSpan.FromSeconds(10));
                     await stream.WriteAsync(payload);
                 });
                 using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
                 try
                 {
-                    return await NrRuntimeLibrary.DownloadVersionAsync(cache,
+                    var download = NrRuntimeLibrary.DownloadVersionAsync(cache,
                         new DllComponent("dlssnr", version, $"http://127.0.0.1:{port}/nr.zip", Sha256: expected), cancellationToken: timeout.Token);
+                    await connected.Task.WaitAsync(timeout.Token);
+                    var probe = NrRuntimeWorkQueue.RunAsync(() => true, timeout.Token);
+                    bool queueAvailable = await Task.WhenAny(probe, Task.Delay(3000, timeout.Token)) == probe;
+                    sendBody.TrySetResult();
+                    string result = await download;
+                    Check(queueAvailable && await probe, "slow NR transfer does not hold runtime transaction gate");
+                    return result;
                 }
-                finally { listener.Stop(); await server; }
+                finally { sendBody.TrySetResult(); listener.Stop(); await server; }
             }
             string archived = await Download("download-fixture", sha);
             void Check(bool ok, string message)

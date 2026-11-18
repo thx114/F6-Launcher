@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using HoYoShadeHub.Extensions.Games;
 
 namespace HoYoShadeHub.Features.Xxmi;
 
@@ -99,6 +100,52 @@ internal static class XxmiModManager
             }
         }
 
+        return null;
+    }
+
+    /// <summary>先读模组封面；Rocket 没有封面时，读取当前后端同名角色图。</summary>
+    public static string? LocalPreview(ModDirectoryContext context, string? modDirectory, string? category)
+    {
+        string? preview = LocalPreview(modDirectory);
+        if (preview is not null || context.Backend != ModBackend.Rocket || string.IsNullOrWhiteSpace(modDirectory))
+            return preview;
+
+        try
+        {
+            string? backing = Path.GetDirectoryName(context.ConfigStamps.FirstOrDefault()?.Path);
+            if (backing is null) return null;
+            // 使用已解析的实际后端名（SR / YS 等），不从角色名猜游戏或跨游戏搜图。
+            string backend = Path.GetFileName(context.InstanceDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            string character = category ?? ModDirectoryPolicy.DisplayName(context, Path.GetFileName(modDirectory));
+            if (string.IsNullOrWhiteSpace(character) || character.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0
+                || character is "." or "..") return null;
+
+            string portraits = backing;
+            foreach (string segment in new[] { "asset", "角色头像", backend })
+            {
+                portraits = Path.Combine(portraits, segment);
+                if (!Directory.Exists(portraits) || (File.GetAttributes(portraits) & FileAttributes.ReparsePoint) != 0)
+                    return null;
+            }
+            string? Find(string directory)
+            {
+                foreach (string name in _previewNames)
+                {
+                    string path = Path.Combine(directory, character + Path.GetExtension(name));
+                    if (File.Exists(path) && (File.GetAttributes(path) & FileAttributes.ReparsePoint) == 0)
+                        return path;
+                }
+                return null;
+            }
+            if (Find(portraits) is { } direct) return direct;
+            foreach (string group in Directory.EnumerateDirectories(portraits).OrderBy(p => p, StringComparer.OrdinalIgnoreCase))
+            {
+                if ((File.GetAttributes(group) & FileAttributes.ReparsePoint) != 0) continue;
+                if (Find(group) is { } grouped) return grouped;
+            }
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
         return null;
     }
 

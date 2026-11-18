@@ -195,7 +195,7 @@ public static class DohService
 
     public static HttpMessageHandler CreateSocketsHttpHandler()
     {
-        return new ForkNetworkPolicyHandler(new EchFallbackHttpMessageHandler(new SocketsHttpHandler
+        return new NetworkActivityHandler(new ForkNetworkPolicyHandler(new EchFallbackHttpMessageHandler(new SocketsHttpHandler
         {
             AllowAutoRedirect = false,
             AutomaticDecompression = DecompressionMethods.All,
@@ -203,7 +203,7 @@ public static class DohService
             EnableMultipleHttp3Connections = true,
             ConnectCallback = ConnectWithDohAsync,
             PooledConnectionIdleTimeout = TimeSpan.FromSeconds(15),
-        }));
+        })));
     }
 
 

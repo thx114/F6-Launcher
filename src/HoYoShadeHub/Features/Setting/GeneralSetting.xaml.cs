@@ -24,6 +24,11 @@ namespace HoYoShadeHub.Features.Setting;
 
 public sealed partial class GeneralSetting : PageBase
 {
+    public bool GameLightweightMode
+    {
+        get => AppConfig.GameLightweightMode;
+        set => AppConfig.GameLightweightMode = value;
+    }
 
     private readonly ILogger<GeneralSetting> _logger = AppConfig.GetLogger<GeneralSetting>();
 

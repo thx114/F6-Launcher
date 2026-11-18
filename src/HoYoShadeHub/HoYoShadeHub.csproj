@@ -28,6 +28,9 @@
 		<Copyright>Copyright (c) 2025 哆啦D夢|DuolaD; F6 modifications (c) 2026 thx114</Copyright>
 	</PropertyGroup>
 	<ItemGroup>
+		<Compile Include="..\Shared\BackgroundProtocol.cs;..\Shared\MultiplayerProcessNames.cs" Link="Shared\%(Filename)%(Extension)" />
+	</ItemGroup>
+	<ItemGroup>
 		<PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
 		<PackageReference Include="CommunityToolkit.WinUI.Animations" Version="8.2.250402" />
 		<PackageReference Include="CommunityToolkit.WinUI.Behaviors" Version="8.2.250402" />
@@ -123,6 +126,15 @@
 	<Target Name="BuildF6ShadeInjector" BeforeTargets="AssignTargetPaths" Condition="'$(DesignTimeBuild)' != 'true'">
 		<Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\..\..\native\HoYoShadeInjector\build.ps1&quot; -Output &quot;$(NativeInjectorOutput)&quot; -Architecture $(Platform)" />
 	</Target>
+	<PropertyGroup>
+		<BackgroundHostOutput>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)\$(BaseIntermediateOutputPath)background-host\$(Platform)'))</BackgroundHostOutput>
+	</PropertyGroup>
+	<Target Name="BuildF6BackgroundHost" BeforeTargets="AssignTargetPaths" Condition="'$(DesignTimeBuild)' != 'true' And ('$(Platform)' == 'x64' Or '$(Platform)' == 'ARM64')">
+		<Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\..\F6Launcher.BackgroundHost\build.ps1&quot; -Output &quot;$(BackgroundHostOutput)&quot; -Architecture $(Platform) -Version &quot;$(Version)&quot;" />
+	</Target>
+	<ItemGroup Condition="'$(Platform)' == 'x64' Or '$(Platform)' == 'ARM64'">
+		<Content Include="$(BackgroundHostOutput)\F6Launcher.BackgroundHost.exe" Link="F6Launcher.BackgroundHost.exe" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+	</ItemGroup>
 	<ItemGroup>
 		<Content Include="$(NativeInjectorOutput)\F6ShadeInjector.exe" Link="F6ShadeInjector.exe" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
 		<Content Include="..\..\native\HoYoShadeInjector\LICENSE" Link="F6ShadeInjector.LICENSE" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />

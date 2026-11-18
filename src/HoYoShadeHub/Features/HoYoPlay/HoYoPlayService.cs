@@ -2,7 +2,9 @@ using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using HoYoShadeHub.Core;
 using HoYoShadeHub.Core.HoYoPlay;
+using HoYoShadeHub.Core.Networking;
 using System;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Collections.Generic;
 using System.Globalization;
@@ -29,6 +31,8 @@ public class HoYoPlayService
     private readonly HttpClient _httpClient;
 
     private readonly IMemoryCache _memoryCache;
+    private readonly ConcurrentDictionary<string, AsyncValueCache<List<GameInfo>>> _gameInfoRefreshes = new();
+    private readonly AsyncValueCache<List<GameInfo>> _persistedGameInfos = new();
 
 
     public HoYoPlayService(ILogger<HoYoPlayService> logger, HoYoPlayClient client, HttpClient httpClient, IMemoryCache memoryCache)
@@ -45,16 +49,34 @@ public class HoYoPlayService
 
     public async Task<GameInfo> GetGameInfoAsync(GameId gameId, CancellationToken cancellationToken = default)
     {
-        if (!_memoryCache.TryGetValue($"{nameof(GameInfo)}_{gameId.Id}", out GameInfo? info))
+        string lang = LanguageUtil.FilterLanguage(CultureInfo.CurrentUICulture.Name);
+        string key = $"{nameof(GameInfo)}_{lang}_{gameId.Id}";
+        if (_memoryCache.TryGetValue(key, out GameInfo? info)) return info!;
+
+        // 页面先用持久缓存；数据库读取和反序列化也不能占用 UI 线程。
+        var cached = await _persistedGameInfos.GetAsync(() =>
         {
-            string lang = CultureInfo.CurrentUICulture.Name;
-            var list = await _client.GetGameInfoAsync(LauncherId.FromGameId(gameId)!, lang, cancellationToken);
-            foreach (var item in list)
+            try
             {
-                _memoryCache.Set($"{nameof(GameInfo)}_{item.Id}", item, TimeSpan.FromMinutes(10));
+                string? json = AppConfig.CachedGameInfo;
+                return Task.FromResult(string.IsNullOrWhiteSpace(json) ? new List<GameInfo>()
+                    : JsonSerializer.Deserialize<List<GameInfo>>(json) ?? []);
             }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Read cached game information");
+                return Task.FromResult(new List<GameInfo>());
+            }
+        }, TimeSpan.FromMinutes(10)).WaitAsync(cancellationToken).ConfigureAwait(false);
+        if (_memoryCache.TryGetValue(key, out info)) return info!;
+        info = cached.FirstOrDefault(x => x == gameId && (string.IsNullOrEmpty(x.Display?.Language)
+            || LanguageUtil.FilterLanguage(x.Display.Language) == lang));
+        if (info is null)
+        {
+            var list = await UpdateGameInfoListAsync(cancellationToken).ConfigureAwait(false);
             info = list.FirstOrDefault(x => x == gameId);
         }
+        if (info is not null) _memoryCache.Set(key, info, TimeSpan.FromMinutes(10));
         return info!;
     }
 
@@ -62,32 +84,32 @@ public class HoYoPlayService
 
     public async Task<List<GameInfo>> UpdateGameInfoListAsync(CancellationToken cancellationToken = default)
     {
-        if (_memoryCache is MemoryCache cache)
-        {
-            cache.Clear();
-        }
-        List<GameInfo> infos = new List<GameInfo>();
-        string lang = CultureInfo.CurrentUICulture.Name;
-        if (LanguageUtil.FilterLanguage(lang) is "zh-cn")
-        {
-            infos.AddRange(await _client.GetGameInfoAsync(LauncherId.ChinaOfficial, lang, cancellationToken));
-            infos.AddRange(await _client.GetGameInfoAsync(LauncherId.GlobalOfficial, lang, cancellationToken));
-        }
-        else
-        {
-            infos.AddRange(await _client.GetGameInfoAsync(LauncherId.GlobalOfficial, lang, cancellationToken));
-            infos.AddRange(await _client.GetGameInfoAsync(LauncherId.ChinaOfficial, lang, cancellationToken));
-        }
-        foreach ((GameBiz _, string launcherId) in LauncherId.GetBilibiliLaunchers())
-        {
-            infos.AddRange(await _client.GetGameInfoAsync(launcherId, lang, cancellationToken));
-        }
+        string lang = LanguageUtil.FilterLanguage(CultureInfo.CurrentUICulture.Name);
+        // 同一语言的多个页面共享刷新；离开一个页面只取消其等待，不取消其他使用者。
+        return await _gameInfoRefreshes.GetOrAdd(lang, _ => new())
+            .GetAsync(() => RefreshGameInfoListAsync(lang), TimeSpan.FromMinutes(10))
+            .WaitAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<List<GameInfo>> RefreshGameInfoListAsync(string lang)
+    {
+        var timer = Stopwatch.StartNew();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        string[] launchers = lang == "zh-cn"
+            ? [LauncherId.ChinaOfficial, LauncherId.GlobalOfficial]
+            : [LauncherId.GlobalOfficial, LauncherId.ChinaOfficial];
+        var lists = await Task.WhenAll(launchers.Concat(LauncherId.GetBilibiliLaunchers().Select(x => x.LauncherId))
+            .Select(id => _client.GetGameInfoAsync(id, lang, timeout.Token))).ConfigureAwait(false);
+        List<GameInfo> infos = lists.SelectMany(x => x).ToList();
         foreach (var item in infos)
         {
-            _memoryCache.Set($"{nameof(GameInfo)}_{item.Id}", item, TimeSpan.FromMinutes(10));
+            _memoryCache.Set($"{nameof(GameInfo)}_{lang}_{item.Id}", item, TimeSpan.FromMinutes(10));
         }
         string json = JsonSerializer.Serialize(infos);
         AppConfig.CachedGameInfo = json;
+        _persistedGameInfos.Invalidate();
+        _logger.LogInformation("Game information refreshed: count={Count}, elapsedMs={Elapsed:F1}",
+            infos.Count, timer.Elapsed.TotalMilliseconds);
         _ = DownloadGameVersionPosterAsync(infos);
         return infos;
     }

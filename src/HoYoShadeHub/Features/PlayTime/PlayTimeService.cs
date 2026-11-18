@@ -1,4 +1,4 @@
-using Dapper;
+﻿using Dapper;
 using Microsoft.Extensions.Logging;
 using Microsoft.Windows.AppLifecycle;
 using HoYoShadeHub.Core;
@@ -11,6 +11,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.IO;
 using System.Threading.Tasks;
 using Vanara.PInvoke;
 
@@ -66,11 +67,7 @@ internal class PlayTimeService
                     }
                 }
             }
-            DatabaseService.SetValue($"playtime_total_{biz}", GetPlayTimeTotal(biz));
-            DatabaseService.SetValue($"playtime_month_{biz}", GetPlayCurrentMonth(biz));
-            DatabaseService.SetValue($"playtime_week_{biz}", GetPlayCurrentWeek(biz));
-            DatabaseService.SetValue($"playtime_day_{biz}", GetPlayCurrentDay(biz));
-            DatabaseService.SetValue($"startup_count_{biz}", GetStartUpCount(biz));
+            RefreshCachedTotals(biz);
             _logger.LogInformation("End log playtime ({biz}, {pid})", biz, pid);
         }
         catch (Exception ex)
@@ -83,6 +80,15 @@ internal class PlayTimeService
 
 
 
+
+    internal void RefreshCachedTotals(GameBiz biz)
+    {
+            DatabaseService.SetValue($"playtime_total_{biz}", GetPlayTimeTotal(biz));
+            DatabaseService.SetValue($"playtime_month_{biz}", GetPlayCurrentMonth(biz));
+            DatabaseService.SetValue($"playtime_week_{biz}", GetPlayCurrentWeek(biz));
+            DatabaseService.SetValue($"playtime_day_{biz}", GetPlayCurrentDay(biz));
+            DatabaseService.SetValue($"startup_count_{biz}", GetStartUpCount(biz));
+    }
 
     private void LogStartState(GameBiz biz, Process process)
     {
@@ -465,13 +471,14 @@ internal class PlayTimeService
                 return;
             }
 
-            using Process? p = Process.Start(new ProcessStartInfo
+            var result = await BackgroundModeCoordinator.SendAsync(new()
             {
-                FileName = AppConfig.HoYoShadeHubExecutePath,
-                Arguments = $"playtime --biz {biz} --pid {process.Id}",
-                CreateNoWindow = true,
+                Command = "track",
+                Game = new(pid, process.StartTime.ToUniversalTime().Ticks, biz.Value, null,
+                    process.StartTime.ToUniversalTime().Ticks, [], [], [], DatabaseService.DatabasePath, [], true),
             });
-            _logger.LogInformation("Start process to log play time: GameBiz {biz}, Pid {pid}, ProcessId {processId}", biz, pid, p?.Id);
+            if (!result.Success) throw new IOException(result.Error);
+            _logger.LogInformation("Native background host records playtime: GameBiz {biz}, Pid {pid}", biz, pid);
         }
         catch (Exception ex)
         {

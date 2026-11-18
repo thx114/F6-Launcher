@@ -185,12 +185,23 @@ internal static class PackageInstallSafetyTests
             Check(reports.Any(p => p.Percent is >= 45 and < 82), "Copy progress missing");
 
             string lockedFile = Path.Combine(modules, "payload.dll");
+            byte[] before = File.ReadAllBytes(lockedFile);
+            bool rejected = false;
             using (File.Open(lockedFile, FileMode.Open, FileAccess.Read, FileShare.None))
             {
-                var partial = await overlayInstaller.InstallAsync(goodOverlay, LocalPackageKind.Overlay).WaitAsync(TimeSpan.FromSeconds(20));
-                Check(partial.Details.Any(d => d.Contains("占用")), "Locked file failure not surfaced");
+                try
+                {
+                    await overlayInstaller.InstallAsync(goodOverlay, LocalPackageKind.Overlay).WaitAsync(TimeSpan.FromSeconds(20));
+                }
+                catch (IOException error) when (error.Message.Contains("payload.dll", StringComparison.Ordinal))
+                {
+                    rejected = true;
+                }
             }
+            Check(rejected, "Locked file did not stop the overlay import");
+            Check(File.ReadAllBytes(lockedFile).SequenceEqual(before), "Rejected overlay changed the locked payload");
             Check(!Directory.EnumerateFiles(modules, "*.hysx-new-*", SearchOption.AllDirectories).Any(), "Staging copy leaked after failure");
+            await overlayInstaller.InstallAsync(goodOverlay, LocalPackageKind.Overlay).WaitAsync(TimeSpan.FromSeconds(20));
         }
         finally { if (Directory.Exists(root)) Directory.Delete(root, recursive: true); }
     }

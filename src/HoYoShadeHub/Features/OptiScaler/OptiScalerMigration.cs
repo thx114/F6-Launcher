@@ -40,7 +40,7 @@ internal static class OptiScalerMigration
 
             // A per-game choice already exists: navigation must not replace it.
             if (!string.IsNullOrWhiteSpace(AppConfig.GetSelectedOptiScalerId(gameId))) return;
-            OptiScalerBuild? build = preloaded ? selectedBuild : new OptiScalerLibrary(root).GetSelected();
+            OptiScalerBuild? build = preloaded ? selectedBuild : new OptiScalerLibrary(root).GetSelected(includeDirectorySize: false);
             if (build is null)
             {
                 return;

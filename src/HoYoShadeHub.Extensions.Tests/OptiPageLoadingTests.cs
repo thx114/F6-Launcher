@@ -29,17 +29,45 @@ internal static class OptiPageLoadingTests
             Check(light.Count == 1 && light[0].SizeBytes == 0 && light[0].DllPath == full[0].DllPath,
                 "page listing preserves build identity without recursive size scan");
             Check(library.GetSelected(false)?.Id == "test/v1", "lightweight legacy selection preserves identity");
+            Check(library.HasInstalledBuild(), "installation probe recognizes the main DLL");
+            Check(library.SelectedDllPath == full[0].DllPath, "selected DLL lookup preserves the selected build");
             using var canceled = new CancellationTokenSource();
             canceled.Cancel();
             try { library.List(false, canceled.Token); Check(false, "canceled enumeration rejected"); }
             catch (OperationCanceledException) { Check(true, "canceled enumeration rejected"); }
+            try { library.HasInstalledBuild(canceled.Token); Check(false, "canceled installation probe rejected"); }
+            catch (OperationCanceledException) { Check(true, "canceled installation probe rejected"); }
             Check(new OptiScalerLibrary(Path.Combine(root, "missing")).List(false).Count == 0,
                 "missing library is an empty page");
             using (File.Open(Path.Combine(build, "build.json"), FileMode.Open, FileAccess.ReadWrite, FileShare.None))
             {
                 try { library.List(false); Check(false, "locked manifest reports failure"); }
                 catch (IOException) { Check(true, "locked manifest reports failure"); }
+                Check(library.HasInstalledBuild(), "installation probe does not require a readable display manifest");
             }
+
+            string probeRoot = Path.Combine(root, "probe-library");
+            string probeBuild = Path.Combine(probeRoot, "local", "v2");
+            string nested = Path.Combine(probeBuild, "runtime");
+            Directory.CreateDirectory(nested);
+            var probe = new OptiScalerLibrary(probeRoot);
+            Check(!probe.HasInstalledBuild(), "empty build is unavailable");
+            File.WriteAllText(Path.Combine(probeBuild, "OptiScaler.ini"), "[OptiScaler]");
+            Check(!probe.HasInstalledBuild(), "configuration without a DLL is unavailable");
+            string proxy = Path.Combine(probeBuild, "dxgi.dll");
+            File.WriteAllBytes(proxy, new byte[16]);
+            Check(probe.HasInstalledBuild() && OptiScalerLibrary.FindDll(probeBuild) == proxy,
+                "proxy-only builds remain available");
+            string variant = Path.Combine(probeBuild, "OptiScaler.DLSSNR.dll");
+            File.WriteAllBytes(variant, new byte[16]);
+            Check(OptiScalerLibrary.FindDll(probeBuild) == variant, "named variants retain priority over proxy DLLs");
+            string nestedMain = Path.Combine(nested, "OptiScaler.dll");
+            File.WriteAllBytes(nestedMain, new byte[16]);
+            Check(probe.HasInstalledBuild() && OptiScalerLibrary.FindDll(probeBuild) == nestedMain,
+                "nested main DLL retains priority over root variants and proxies");
+            string rootMain = Path.Combine(probeBuild, "OptiScaler.dll");
+            File.WriteAllBytes(rootMain, new byte[16]);
+            Check(OptiScalerLibrary.FindDll(probeBuild) == rootMain, "root main DLL retains priority over nested main DLLs");
 
             // WinUI is not hosted here; these are source contracts protecting the
             // exact initialization/reentrant refresh bug, separate from UI acceptance.

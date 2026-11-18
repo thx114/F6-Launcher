@@ -1,4 +1,4 @@
-using CommunityToolkit.Mvvm.ComponentModel;
+﻿using CommunityToolkit.Mvvm.ComponentModel;
 using HoYoShadeHub.Extensions.Dlls;
 using HoYoShadeHub.Extensions;
 using HoYoShadeHub.Extensions.Models;
@@ -44,6 +44,11 @@ public sealed partial class DllConfigPage : PageBase
 
     private ShadeHost? _host;
     private DllCatalog? _catalog;
+    private static readonly object CatalogRefreshGate = new();
+    private static Task<DllCatalog>? _catalogRefresh;
+    private static string? _catalogRefreshPath;
+    private static DateTime _catalogNextAttemptUtc;
+    private static string ComponentCachePath => Path.Combine(RemoteCatalogService.CacheDirectory, "dll-components.json");
     // 页面可以在旧 I/O 完成前卸载/重建；跨实例串行访问共享 DLL 库。
     private bool _working;
     private long _operationGeneration;
@@ -129,7 +134,7 @@ public sealed partial class DllConfigPage : PageBase
         if (IsPageGenerationCurrent(generation)) await RefreshAsync();
     }
 
-    private bool IsOperationCurrent => IsPageGenerationCurrent(_operationGeneration);
+    private bool IsOperationCurrent => HasPageOperation || IsPageGenerationCurrent(_operationGeneration);
     private void EnsureOperationCurrent()
     {
         if (_isWorking && !IsOperationCurrent) throw new OperationCanceledException("DLL 页面已卸载。");
@@ -162,6 +167,7 @@ public sealed partial class DllConfigPage : PageBase
     protected override void OnUnloaded()
     {
         _nrStateTimer?.Stop();
+        if (HasPageOperation) return;
         _nrScanRevision++;
         _familyRevision++;
         Installed.Clear();
@@ -180,6 +186,7 @@ public sealed partial class DllConfigPage : PageBase
         }
 
         _isWorking = true;
+        var timing = System.Diagnostics.Stopwatch.StartNew();
         ProgressBar_Overall.IsIndeterminate = true;
         ProgressBar_Overall.Visibility = Visibility.Visible;
         TextBlock_Status.Text = "正在读插件目录与组件清单…";
@@ -207,12 +214,10 @@ public sealed partial class DllConfigPage : PageBase
             TextBlock_TargetPath.Text = _host.AddonsPath;
             // 本地版本先显示，云端刷新失败或耗时不应让已下载内容消失。
             // 文件系统是已下载状态的依据；刷新不能把用户手动删除的文件恢复出来。
-            await RefreshNrCardsAsync();
-            await RunBackgroundAsync(async () => { await RemoteCatalogService.RefreshIfDueAsync(); return true; });
+            _catalog = await RunDiskAsync(() => DllComponentCatalog.LoadCached(ComponentCachePath));
             await LoadInstalledAsync();
-
-            _catalog ??= await RunBackgroundAsync(() => DllComponentCatalog.LoadAsync());
             await BuildFamiliesAsync();
+            TextBlock_Status.Text = $"已读取 {Installed.Count} 个 DLL、{Families.Count} 类组件。";
 
             if (_catalog.Error is { } error)
             {
@@ -223,8 +228,8 @@ public sealed partial class DllConfigPage : PageBase
                 await UpdateStatusInfoAsync();
             }
 
-            _logger.LogInformation("DLL page: {Installed} dlls, {Families} families, host = {Host}",
-                Installed.Count, Families.Count, _host.RootPath);
+            _logger.LogInformation("DLL page local cache: {Installed} dlls, {Families} families, elapsedMs={ElapsedMs:F1}, host = {Host}",
+                Installed.Count, Families.Count, timing.Elapsed.TotalMilliseconds, _host.RootPath);
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
@@ -236,6 +241,47 @@ public sealed partial class DllConfigPage : PageBase
         {
             _isWorking = false;
         }
+        if (IsOperationCurrent && _host is not null) _ = RefreshCatalogInBackgroundAsync();
+    }
+
+    private async Task RefreshCatalogInBackgroundAsync()
+    {
+        long generation = PageGeneration;
+        long revision = _operationRevision;
+        try
+        {
+            Task<DllCatalog> refresh;
+            string path = ComponentCachePath;
+            lock (CatalogRefreshGate)
+            {
+                if (_catalogRefresh is { IsCompleted: false } && _catalogRefreshPath == path) refresh = _catalogRefresh;
+                else
+                {
+                    if (_catalogRefreshPath == path && DateTime.UtcNow < _catalogNextAttemptUtc) return;
+                    if (File.Exists(path) && DateTime.UtcNow - File.GetLastWriteTimeUtc(path) < TimeSpan.FromHours(24)) return;
+                    _catalogRefreshPath = path;
+                    _catalogNextAttemptUtc = DateTime.UtcNow.AddMinutes(2);
+                    refresh = _catalogRefresh = Task.Run(async () =>
+                    {
+                        await RemoteCatalogService.RefreshIfDueAsync();
+                        return await DllComponentCatalog.LoadAsync(cachePath: path);
+                    });
+                }
+            }
+            var catalog = await refresh.WaitAsync(PageCancellationToken);
+            if (!IsPageGenerationCurrent(generation) || _isWorking || revision != _operationRevision) return;
+            _isWorking = true;
+            try
+            {
+                _catalog = catalog;
+                await BuildFamiliesAsync();
+                await UpdateStatusInfoAsync();
+                if (catalog.Error is { } error) ShowInfo("后台清单更新未完成，已保留本地版本", error, InfoBarSeverity.Informational);
+            }
+            finally { _isWorking = false; }
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) { _logger.LogWarning(ex, "Refresh DLL catalog in background; local content remains available"); }
     }
 
     private async Task LoadInstalledAsync()
@@ -369,6 +415,7 @@ public sealed partial class DllConfigPage : PageBase
     {
         string? directory = _host?.AddonsPath;
         AddonDllStatus status = await RunDiskAsync(() => AddonDllChecker.Check(directory, [DlssDllRequirements.Dlss5Tag]));
+        TextBlock_Status.Text = $"已读取 {Installed.Count} 个 DLL、{Families.Count} 类组件。";
 
         if (status.Severity == 2)
         {
@@ -400,6 +447,7 @@ public sealed partial class DllConfigPage : PageBase
     {
         if (_isWorking || sender is not FrameworkElement { DataContext: DllFamilyViewModel family }
             || _host is not { } host || family.SelectedComponent is not { } component) return;
+        using var operation = BeginPageOperation($"切换 {component.Family} {component.Version}");
         _isWorking = true;
         ProgressBar_Overall.IsIndeterminate = true;
         ProgressBar_Overall.Visibility = Visibility.Visible;
@@ -481,6 +529,7 @@ public sealed partial class DllConfigPage : PageBase
     private async void Button_DownloadNr_Click(object sender, RoutedEventArgs e)
     {
         if (_isWorking || sender is not FrameworkElement { DataContext: NrVersionCardViewModel { Component: { } component } }) return;
+        using var operation = BeginPageOperation($"下载 NR {component.Version}");
         _isWorking = true;
         ProgressBar_Overall.Visibility = Visibility.Visible;
         ProgressBar_Overall.IsIndeterminate = false;
@@ -493,11 +542,11 @@ public sealed partial class DllConfigPage : PageBase
             var progress = new Progress<DownloadProgress>(p =>
             {
                 if (!_isWorking || revision != _operationRevision || progressRevision != _progressRevision
-                    || !IsPageGenerationCurrent(generation)) return;
+                    || !IsOperationCurrent) return;
                 ProgressBar_Overall.Value = p.Percent ?? 0;
                 TextBlock_Status.Text = $"正在下载 {component.Version}… {p.BytesReceived / 1024d / 1024d:F1} MB";
             });
-            await RunDiskTaskAsync(() => NrRuntimeLibrary.DownloadVersionAsync(AppConfig.CacheRoot, component, progress));
+            await Task.Run(() => NrRuntimeLibrary.DownloadVersionAsync(AppConfig.CacheRoot, component, progress));
             _progressRevision++;
             _nrUpdates.Remove(component.Version);
             await RefreshNrCardsAsync();
@@ -552,7 +601,7 @@ public sealed partial class DllConfigPage : PageBase
                 ShowInfo("NR 更新检查未完成", result.Message + " 保留上次有效目录。", InfoBarSeverity.Warning);
                 return;
             }
-            _catalog = await RunBackgroundAsync(() => DllComponentCatalog.LoadAsync());
+            _catalog = await RunBackgroundAsync(() => DllComponentCatalog.LoadAsync(cachePath: ComponentCachePath));
             var store = new DllVersionStore(AppConfig.CacheRoot);
             var updates = await RunDiskAsync(() => DllFingerprintCatalog.Fingerprints
                 .Where(f => f.Family.Equals("dlssnr", StringComparison.OrdinalIgnoreCase))
@@ -664,6 +713,7 @@ public sealed partial class DllConfigPage : PageBase
     private async void Button_FixDlss5_Click(object sender, RoutedEventArgs e)
     {
         if (_isWorking || _host is not { } host || _catalog is not { } catalog) return;
+        using var operation = BeginPageOperation("安装必要 DLL 组件");
         _isWorking = true;
         TextBlock_Status.Text = "正在检查必要组件…";
         ProgressBar_Overall.Visibility = Visibility.Visible;
@@ -707,11 +757,13 @@ public sealed partial class DllConfigPage : PageBase
     private async Task RunInstallAsync(DllComponent component, bool quiet = false, bool ownsWork = true)
     {
         if (_host is not { } host || (ownsWork && _isWorking)) return;
+        using var operation = BeginPageOperation($"安装 {component.Family} {component.Version}");
         if (ownsWork) _isWorking = true;
         ProgressBar_Overall.IsIndeterminate = false;
         ProgressBar_Overall.Value = 0;
         ProgressBar_Overall.Visibility = Visibility.Visible;
         long progressRevision = ++_progressRevision;
+        string staging = Path.Combine(AppConfig.CacheRoot, "dll-download-" + Guid.NewGuid().ToString("N"));
         try
         {
             DllFamily? family = DllComponentCatalog.FamilyOf(component.Family);
@@ -721,15 +773,23 @@ public sealed partial class DllConfigPage : PageBase
             var progress = new Progress<DownloadProgress>(p =>
             {
                 if (!_isWorking || revision != _operationRevision || progressRevision != _progressRevision
-                    || !IsPageGenerationCurrent(generation)) return;
+                    || !IsOperationCurrent) return;
                 ProgressBar_Overall.Value = p.Percent ?? 0;
                 TextBlock_Status.Text = $"正在下载 {component.Version}… {p.BytesReceived / 1024d / 1024d:F1} MB";
             });
-            // 包括首次 await 前的文件访问、解压续接、归档、内容整合及 SyncAll；一次事务在 worker 完成。
-            DllInstallResult result = await RunDiskTaskAsync(async () =>
+            var download = await Task.Run(() => DllInstaller.InstallAsync(staging, component, progress));
+            EnsureOperationCurrent();
+            DllInstallResult result = !download.Ok ? download : await RunDiskAsync(() =>
             {
-                var installed = await DllInstaller.InstallAsync(host.AddonsPath, component, progress).ConfigureAwait(false);
-                if (!installed.Ok) return installed;
+                var overwritten = new List<string>();
+                Directory.CreateDirectory(host.AddonsPath);
+                foreach (string name in download.Installed)
+                {
+                    string target = Path.Combine(host.AddonsPath, name);
+                    if (File.Exists(target)) overwritten.Add(name);
+                    File.Move(Path.Combine(staging, name), target, overwrite: true);
+                }
+                var installed = download with { Overwritten = overwritten };
                 AppConfig.SetInstalledDllVariant(component.Family, component.Version);
                 if (family is not null)
                     AppConfig.SetInstalledDllVariantSize(family.Id,
@@ -784,6 +844,8 @@ public sealed partial class DllConfigPage : PageBase
         }
         finally
         {
+            try { await Task.Run(() => { if (Directory.Exists(staging)) Directory.Delete(staging, true); }); }
+            catch (Exception ex) { _logger.LogWarning(ex, "Clean DLL download staging"); }
             _progressRevision++;
             if (ownsWork) _isWorking = false;
         }

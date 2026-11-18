@@ -171,15 +171,29 @@ public sealed partial class GameLauncherPage : PageBase
         if (!IsPageRequestCurrent(_shadeRequests, request, gameId)) return;
         try
         {
-            // Check HoYoShade installation
-            string hoYoShadePath = Path.Combine(AppConfig.UserDataFolder, "HoYoShade");
-            IsHoYoShadeInstalled = Directory.Exists(hoYoShadePath) &&
-                                   Directory.GetFiles(hoYoShadePath, "*.dll").Length > 0;
-
-            // Check OpenHoYoShade installation
-            string openHoYoShadePath = Path.Combine(AppConfig.UserDataFolder, "OpenHoYoShade");
-            IsOpenHoYoShadeInstalled = Directory.Exists(openHoYoShadePath) &&
-                                       Directory.GetFiles(openHoYoShadePath, "*.dll").Length > 0;
+            string userRoot = AppConfig.UserDataFolder ?? string.Empty;
+            string optiRoot = AppConfig.OptiScalerRootPath;
+            string? genshinPluginPath = AppConfig.GenshinBlenderPluginPath;
+            string? zzzPluginPath = AppConfig.ZZZBlenderPluginPath;
+            bool checkGenshinPlugin = gameId.GameBiz.ToGame().Value == GameBiz.hk4e && !gameId.GameBiz.IsBetaServer();
+            bool checkZzzPlugin = gameId.GameBiz.ToGame().Value == GameBiz.nap && !gameId.GameBiz.IsBetaServer();
+            var timer = Stopwatch.StartNew();
+            // 文件系统可能在冷缓存、外置盘或大量 NR 文件下变慢；只在后台读取，
+            // 回到界面后校验页面和游戏身份，再一次性应用结果。
+            var installed = await Task.Run(() =>
+            {
+                static bool HasDll(string path) => Directory.Exists(path) && Directory.EnumerateFiles(path, "*.dll").Any();
+                static bool HasPlugin(string? path, string executable) => !string.IsNullOrWhiteSpace(path)
+                    && File.Exists(Path.Combine(path, executable));
+                return (Shade: userRoot.Length > 0 && HasDll(Path.Combine(userRoot, "HoYoShade")),
+                    OpenShade: userRoot.Length > 0 && HasDll(Path.Combine(userRoot, "OpenHoYoShade")),
+                    Opti: HasInstalledOptiScaler(optiRoot),
+                    GenshinBlender: checkGenshinPlugin && HasPlugin(genshinPluginPath, "client.exe"),
+                    ZzzBlender: checkZzzPlugin && HasPlugin(zzzPluginPath, "loader.exe"));
+            });
+            if (!IsPageRequestCurrent(_shadeRequests, request, gameId)) return;
+            IsHoYoShadeInstalled = installed.Shade;
+            IsOpenHoYoShadeInstalled = installed.OpenShade;
 
             // Load versions
             try 
@@ -208,7 +222,7 @@ public sealed partial class GameLauncherPage : PageBase
             }
 
             // OptiScaler：本地有装好的构建才让勾（选哪个构建在「OptiScaler」页）
-            IsOptiScalerAvailable = HasInstalledOptiScaler();
+            IsOptiScalerAvailable = installed.Opti;
             if (!IsOptiScalerAvailable && UseOptiScaler)
             {
                 UseOptiScaler = false;
@@ -231,16 +245,19 @@ public sealed partial class GameLauncherPage : PageBase
             }
 
             // Check Blender plugin configurations
-            CheckBlenderPluginConfigurations();
+            CheckBlenderPluginConfigurations(installed.GenshinBlender, installed.ZzzBlender);
 
             // Check Starward protocol availability
             CheckStarwardProtocolAvailability();
 
             _logger.LogInformation("HoYoShade installed: {HoYoShade} ({Version}), OpenHoYoShade installed: {OpenHoYoShade} ({OpenVersion})",
                 IsHoYoShadeInstalled, HoYoShadeVersion, IsOpenHoYoShadeInstalled, OpenHoYoShadeVersion);
+            _logger.LogInformation("Launcher installation check: elapsedMs={Elapsed:F1}, OptiScaler={OptiScaler}",
+                timer.Elapsed.TotalMilliseconds, IsOptiScalerAvailable);
         }
         catch (Exception ex)
         {
+            if (!IsPageRequestCurrent(_shadeRequests, request, gameId)) return;
             _logger.LogError(ex, "Check shade installation");
             IsHoYoShadeInstalled = false;
             IsOpenHoYoShadeInstalled = false;
@@ -291,7 +308,7 @@ public sealed partial class GameLauncherPage : PageBase
         }
     }
 
-    private void CheckBlenderPluginConfigurations()
+    private void CheckBlenderPluginConfigurations(bool genshinConfigured, bool zzzConfigured)
     {
         try
         {
@@ -304,10 +321,7 @@ public sealed partial class GameLauncherPage : PageBase
 
             if (isGenshinGame && !isGenshinBetaClient)
             {
-                string? genshinPluginPath = AppConfig.GenshinBlenderPluginPath;
-                IsGenshinBlenderPluginConfigured = !string.IsNullOrWhiteSpace(genshinPluginPath) &&
-                                                   Directory.Exists(genshinPluginPath) &&
-                                                   File.Exists(Path.Combine(genshinPluginPath, "client.exe"));
+                IsGenshinBlenderPluginConfigured = genshinConfigured;
 
                 if (!IsGenshinBlenderPluginConfigured && LaunchGenshinBlenderPlugin)
                 {
@@ -332,10 +346,7 @@ public sealed partial class GameLauncherPage : PageBase
 
             if (isZZZGame && !isZZZBetaClient)
             {
-                string? zzzPluginPath = AppConfig.ZZZBlenderPluginPath;
-                IsZZZBlenderPluginConfigured = !string.IsNullOrWhiteSpace(zzzPluginPath) &&
-                                               Directory.Exists(zzzPluginPath) &&
-                                               File.Exists(Path.Combine(zzzPluginPath, "loader.exe"));
+                IsZZZBlenderPluginConfigured = zzzConfigured;
 
                 if (!IsZZZBlenderPluginConfigured && LaunchZZZBlenderPlugin)
                 {
@@ -669,18 +680,16 @@ public sealed partial class GameLauncherPage : PageBase
     }
 
     /// <summary>本地库里有没有装好的 OptiScaler 构建</summary>
-    private static bool HasInstalledOptiScaler()
+    private static bool HasInstalledOptiScaler(string root)
     {
         try
         {
-            string root = AppConfig.OptiScalerRootPath;
             if (root.Length == 0)
             {
                 return false;
             }
 
-            return new Extensions.Services.OptiScalerLibrary(root).List()
-                .Any(b => !string.IsNullOrWhiteSpace(b.DllPath));
+            return new Extensions.Services.OptiScalerLibrary(root).HasInstalledBuild();
         }
         catch
         {
@@ -1216,13 +1225,6 @@ public sealed partial class GameLauncherPage : PageBase
                           IsStarwardProtocolAvailable && 
                           AppConfig.UseStarwardLauncher &&
                           !isBetaClient;
-            
-            _logger.LogInformation("IsStarwardLauncherCheckboxEnabled: {Result} (Blender: {Blender}, Protocol: {Protocol}, Setting: {Setting}, IsBeta: {IsBeta})", 
-                result, 
-                LaunchGenshinBlenderPlugin || LaunchZZZBlenderPlugin,
-                IsStarwardProtocolAvailable,
-                AppConfig.UseStarwardLauncher,
-                isBetaClient);
             
             return result;
         }

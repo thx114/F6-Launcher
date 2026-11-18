@@ -7,7 +7,7 @@ namespace HoYoShadeHub.Extensions.ReShade;
 /// 其余文件都由用户（或扩展包作者）维护，存在即生效。
 ///
 /// <list type="bullet">
-/// <item><c>ini_config.json</c> —— 每次启动写进游戏 ReShade.ini 的节/键（见 <see cref="GamePackIniConfig"/>）；</item>
+/// <item><c>ini_config.json</c> —— 安装批次首次写进游戏 ReShade.ini 的节/键（见 <see cref="GamePackIniConfig"/>）；</item>
 /// <item><c>auto.json</c> —— 自定义动作（见 <see cref="PackAutoAction"/>）；</item>
 /// <item><c>presets\</c> —— 随包导入的 DLSS5 预设（复制进 <c>Addons\DLSS5-Presets\</c>）；</item>
 /// <item><c>game_files\</c> —— 覆盖到游戏目录的文件（相对结构保持）；</item>
@@ -68,7 +68,7 @@ public static class GameAddonPackUserContent
 
     /// <summary>
     /// 把包 <c>presets\</c> 下的预设复制进 <c>&lt;AddonPath&gt;\DLSS5-Presets\</c>
-    /// （游戏内插件和启动器预设页都扫这里）。按内容幂等，预设页里已有的不重写。
+    /// （游戏内插件和启动器预设页都扫这里）。每个安装批次只导入一次，不覆盖之后的用户保存。
     /// </summary>
     /// <returns>复制 / 更新了几个文件</returns>
     public static int SyncPresets(string? packRoot, string? addonDirectory)
@@ -82,6 +82,7 @@ public static class GameAddonPackUserContent
         int copied = 0;
         try
         {
+            using var batch = PackApplicationBatch.Open(packRoot!);
             foreach (string file in Directory.EnumerateFiles(source, "*.ini", SearchOption.AllDirectories))
             {
                 string relative = Path.GetRelativePath(source, file);
@@ -89,19 +90,22 @@ public static class GameAddonPackUserContent
 
                 try
                 {
-                    if (File.Exists(target))
+                    bool changed = batch.ApplyOnce("preset:" + relative.Replace('\\', '/').ToUpperInvariant(), () =>
                     {
-                        byte[] existing = File.ReadAllBytes(target);
                         byte[] incoming = File.ReadAllBytes(file);
-                        if (existing.AsSpan().SequenceEqual(incoming))
+                        if (File.Exists(target) && File.ReadAllBytes(target).AsSpan().SequenceEqual(incoming)) return false;
+                        Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                        string staged = target + "." + Guid.NewGuid().ToString("N") + ".tmp";
+                        try
                         {
-                            continue;
+                            // 私有副本 + 原子替换，不能写穿旧预设的硬链接。
+                            File.WriteAllBytes(staged, incoming);
+                            File.Move(staged, target, overwrite: true);
                         }
-                    }
-
-                    Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-                    File.Copy(file, target, overwrite: true);
-                    copied++;
+                        finally { if (File.Exists(staged)) File.Delete(staged); }
+                        return true;
+                    });
+                    if (changed) copied++;
                 }
                 catch
                 {

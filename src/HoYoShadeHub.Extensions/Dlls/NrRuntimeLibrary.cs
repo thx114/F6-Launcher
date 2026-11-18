@@ -152,16 +152,20 @@ public static class NrRuntimeLibrary
         string temporary = Path.Combine(cacheRoot, "nr-download-" + Guid.NewGuid().ToString("N"));
         try
         {
-            var result = await DllInstaller.InstallAsync(temporary, component, progress, cancellationToken);
+            var result = await DllInstaller.InstallAsync(temporary, component, progress, cancellationToken).ConfigureAwait(false);
             if (!result.Ok) throw new IOException(result.Error ?? "NR 下载失败。");
             string source = Path.Combine(temporary, FileName);
             if (!File.Exists(source)) throw new IOException("下载包缺少 nvngx_dlssnr.dll。");
             if (!DllFingerprintCatalog.ValidatePe(source, null, out string error)) throw new IOException(error);
             string hash = Hash(source);
-            new DllVersionStore(cacheRoot).Archive("dlssnr", component.Version, [source]);
-            string archived = VersionFile(cacheRoot, component.Version);
-            if (!Hash(archived).Equals(hash, StringComparison.OrdinalIgnoreCase)) throw new IOException("NR 归档校验失败。");
-            return archived;
+            // Network and private extraction never occupy the shared runtime transaction gate.
+            return await NrRuntimeWorkQueue.RunAsync(() =>
+            {
+                new DllVersionStore(cacheRoot).Archive("dlssnr", component.Version, [source]);
+                string archived = VersionFile(cacheRoot, component.Version);
+                if (!Hash(archived).Equals(hash, StringComparison.OrdinalIgnoreCase)) throw new IOException("NR 归档校验失败。");
+                return archived;
+            }, cancellationToken).ConfigureAwait(false);
         }
         finally { if (Directory.Exists(temporary)) Directory.Delete(temporary, true); }
     }

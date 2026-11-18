@@ -10,9 +10,11 @@ internal static class PackAutoStartupCleanupTests
         Directory.CreateDirectory(root);
         try
         {
+            int passed = 0;
             void Check(bool ok, string name)
             {
                 if (!ok) throw new Exception(name);
+                passed++;
                 Console.WriteLine("PASS " + name);
             }
             string games = Path.Combine(root, "cache", "games");
@@ -28,20 +30,52 @@ internal static class PackAutoStartupCleanupTests
             Directory.CreateDirectory(source);
             string incoming = Path.Combine(source, "auto.json");
             File.WriteAllText(incoming, "{\"actions\":[]}");
-            Check(PackAutoStartupCleanup.DeleteExisting(games, games) == 2, "existing game and pending actions removed once");
+            Check(PackAutoStartupCleanup.DeleteExisting(games, games) == 0
+                && File.Exists(Path.Combine(pack, "auto.json")) && File.Exists(Path.Combine(pending, "auto.json")),
+                "startup preserves both installed and never-applied pending actions");
             Check(File.ReadAllText(ini) == "keep", "other overlay configuration preserved");
             Check(File.Exists(incoming), "incoming overlay source untouched");
-            File.Copy(incoming, Path.Combine(pack, "auto.json"));
+            File.Copy(incoming, Path.Combine(pack, "auto.json"), overwrite: true);
             Check(File.ReadAllText(Path.Combine(pack, "auto.json")) == File.ReadAllText(incoming), "overlay installed after startup remains available");
             using (var held = new FileStream(Path.Combine(pack, "auto.json"), FileMode.Open, FileAccess.Read, FileShare.None))
             {
-                bool blocked = false;
-                try { PackAutoStartupCleanup.DeleteExisting(games); }
-                catch (IOException) { blocked = true; }
-                Check(blocked, "locked legacy action fails startup cleanup explicitly");
+                Check(PackAutoStartupCleanup.DeleteExisting(games) == 0,
+                    "startup does not open or delete even exclusively locked action files");
             }
             Check(PackAutoStartupCleanup.DeleteExisting(Path.Combine(root, "missing")) == 0, "missing roots are harmless");
-            Console.WriteLine("Startup auto cleanup: PASS 6, FAIL 0");
+            File.Delete(Path.Combine(pack, "auto.json"));
+            string hidden = Path.Combine(pack, "nested", "hidden");
+            Directory.CreateDirectory(hidden);
+            File.SetAttributes(hidden, File.GetAttributes(hidden) | FileAttributes.Hidden | FileAttributes.System);
+            string mixedCase = Path.Combine(hidden, "AUTO.JsOn");
+            File.WriteAllText(mixedCase, "old-hidden");
+            File.SetAttributes(mixedCase, FileAttributes.Hidden | FileAttributes.System);
+            string backup = Path.Combine(hidden, "auto.json.backup");
+            File.WriteAllText(backup, "keep");
+            Check(PackAutoStartupCleanup.DeleteExisting(games) == 0 && File.Exists(mixedCase),
+                "deep hidden and system actions are neither enumerated nor removed");
+            Check(File.ReadAllText(backup) == "keep", "similar names remain untouched");
+
+            string directoryLink = Path.Combine(pack, "linked-content");
+            string fileLink = Path.Combine(pack, "auto.json");
+            try
+            {
+                Directory.CreateSymbolicLink(directoryLink, source);
+                File.CreateSymbolicLink(fileLink, incoming);
+                Check(PackAutoStartupCleanup.DeleteExisting(directoryLink) == 0 && File.Exists(incoming),
+                    "linked root is not traversed");
+                Check(PackAutoStartupCleanup.DeleteExisting(games) == 0 && File.Exists(incoming) && File.Exists(fileLink),
+                    "linked child directory and action file are excluded");
+            }
+            catch (UnauthorizedAccessException)
+            {
+                Console.WriteLine("SKIP symbolic-link fixtures: Windows symlink privilege unavailable");
+            }
+            catch (IOException ex) when ((ex.HResult & 0xffff) == 1314)
+            {
+                Console.WriteLine("SKIP symbolic-link fixtures: Windows symlink privilege unavailable");
+            }
+            Console.WriteLine($"Startup auto cleanup: PASS {passed}, FAIL 0");
             return 0;
         }
         finally { Directory.Delete(root, true); }

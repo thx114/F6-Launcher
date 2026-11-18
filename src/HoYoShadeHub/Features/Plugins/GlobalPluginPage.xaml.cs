@@ -208,6 +208,7 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
         ShellFileDrop.Register(_dropWindowHandle, this);
 
         // ItemsSource 已在 XAML x:Bind，重复赋值会重建全部模板。
+        if (_isWorking && HasPageOperation) return;
         _pageLifetime?.Cancel();
         _pageLifetime?.Dispose();
         _pageLifetime = new CancellationTokenSource();
@@ -468,7 +469,7 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
 
     protected override void OnUnloaded()
     {
-        _pageLifetime?.Cancel();
+        if (!HasPageOperation) _pageLifetime?.Cancel();
         ShellFileDrop.Unregister(_dropWindowHandle, this);
         _dropWindowHandle = 0;
 
@@ -1232,7 +1233,7 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
     private void SelectorBar_View_SelectionChanged(SelectorBar sender, SelectorBarSelectionChangedEventArgs args)
     {
         // 事件可能在 InitializeComponent 解析到一半就触发，这时后面的控件还是 null
-        if (Grid_Plugins is null || Grid_OptiScaler is null || Grid_Modules is null)
+        if (Grid_ViewContent is null)
         {
             return;
         }
@@ -1251,6 +1252,7 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
     /// </summary>
     private void SwitchView(string tag)
     {
+        EnsureViewCreated(tag);
         string previous = _tab;
         _tab = tag;
 
@@ -1294,6 +1296,12 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
         "modules" => Grid_Modules,
         _ => Grid_Plugins,
     };
+
+    private void EnsureViewCreated(string tag)
+    {
+        if (tag == "optiscaler" && Grid_OptiScaler is null) FindName(nameof(Grid_OptiScaler));
+        if (tag == "modules" && Grid_Modules is null) FindName(nameof(Grid_Modules));
+    }
 
     /// <summary>标签的顺序号，只用来决定平移方向（往右点 → 内容往左推）。</summary>
     private static int ViewOrder(string tag) => tag switch
@@ -1408,22 +1416,26 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
         TextBlock_PluginsCurrentEmpty.Visibility = InstalledItems.Count == 0 && OrphanAddonFiles.Count == 0
             ? Visibility.Visible : Visibility.Collapsed;
         TextBlock_PluginsAvailableEmpty.Visibility = VisibleItems.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        TextBlock_OptiScalerCurrentEmpty.Visibility = OptiScalerBuilds.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        TextBlock_OptiScalerAvailableEmpty.Visibility = OptiScalerSources.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        TextBlock_ModulesCurrentEmpty.Visibility = CurrentModules.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        TextBlock_ModulesAvailableEmpty.Visibility = AvailableModules.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        if (TextBlock_OptiScalerCurrentEmpty is not null)
+            TextBlock_OptiScalerCurrentEmpty.Visibility = OptiScalerBuilds.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        if (TextBlock_OptiScalerAvailableEmpty is not null)
+            TextBlock_OptiScalerAvailableEmpty.Visibility = OptiScalerSources.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        if (TextBlock_ModulesCurrentEmpty is not null)
+            TextBlock_ModulesCurrentEmpty.Visibility = CurrentModules.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        if (TextBlock_ModulesAvailableEmpty is not null)
+            TextBlock_ModulesAvailableEmpty.Visibility = AvailableModules.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void UpdateTabVisibility()
     {
-        if (Grid_Plugins is null || Grid_OptiScaler is null || Grid_Modules is null)
+        if (Grid_Plugins is null)
         {
             return;
         }
 
         Grid_Plugins.Visibility = _tab == "plugins" ? Visibility.Visible : Visibility.Collapsed;
-        Grid_OptiScaler.Visibility = _tab == "optiscaler" ? Visibility.Visible : Visibility.Collapsed;
-        Grid_Modules.Visibility = _tab == "modules" ? Visibility.Visible : Visibility.Collapsed;
+        if (Grid_OptiScaler is not null) Grid_OptiScaler.Visibility = _tab == "optiscaler" ? Visibility.Visible : Visibility.Collapsed;
+        if (Grid_Modules is not null) Grid_Modules.Visibility = _tab == "modules" ? Visibility.Visible : Visibility.Collapsed;
     }
 
     /// <summary>插件页：已装 = 已装扩展（+ 没归属的插件文件），未装 = 可下载的扩展</summary>
@@ -2674,23 +2686,18 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
             cards.Add(moduleVm);
         }
 
-        // 需求3：本地装过的手动 DLL 如果能按文件名对上目录里的某个模块，
-        // 说明它就是这个模块 —— 可下载那边不再重复列一遍。
-        HashSet<string> installedDllNames = [
-            .. cards
-                .Where(m => !string.IsNullOrWhiteSpace(m.DllPath))
-                .Select(m => Path.GetFileName(m.DllPath))
-                .Where(n => !string.IsNullOrWhiteSpace(n))!
-        ];
+        // Reuse the registry's identity decision. An arbitrary version.dll must not
+        // hide every downloadable module that happens to use that proxy name.
+        var installedCatalogIds = new HashSet<string>(entries
+            .Where(e => !string.IsNullOrWhiteSpace(e.DllPath) && e.CatalogId is not null)
+            .Select(e => e.CatalogId!), StringComparer.OrdinalIgnoreCase);
 
         foreach (ModuleEntry missing in entries.Where(e => e.IsBuiltin && string.IsNullOrWhiteSpace(e.DllPath)))
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (missing.Definition is not { } module) continue;
 
-            // 需求3：本地「添加 DLL…」加进来的那个文件，如果文件名跟这个模块要装的
-            // DLL 对得上，就认为它们是同一个东西 —— 「可下载」里不再重复出现。
-            if (installedDllNames.Contains(Path.GetFileName(module.DllHint)))
+            if (installedCatalogIds.Contains(module.Id))
             {
                 continue;
             }
@@ -2989,7 +2996,12 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
             {
                 string result = await ModuleRegistry.InstallAsync(
                     module,
-                    progress: null,
+                    progress: new Progress<DownloadProgress>(p =>
+                    {
+                        ProgressBar_Overall.IsIndeterminate = p.Percent is null;
+                        ProgressBar_Overall.Value = p.Percent ?? 0;
+                        TextBlock_Status.Text = $"正在下载模块「{module.Name}」… {p.BytesReceived / 1048576d:F1} MB";
+                    }),
                     confirmBeforeRun: async _ => await ConfirmModuleSetupAsync(module),
                     tag: row.Tag);
 
@@ -3101,7 +3113,12 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
 
                 string result = await ModuleRegistry.InstallAsync(
                     item.Module,
-                    progress: null,
+                    progress: new Progress<DownloadProgress>(p =>
+                    {
+                        ProgressBar_Overall.IsIndeterminate = p.Percent is null;
+                        ProgressBar_Overall.Value = p.Percent ?? 0;
+                        TextBlock_Status.Text = $"正在下载模块「{item.Name}」… {p.BytesReceived / 1048576d:F1} MB";
+                    }),
                     confirmBeforeRun: async _ => await ConfirmModuleSetupAsync(item.Module),
                     tag: tag);
 
@@ -4850,6 +4867,7 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
             return;
         }
 
+        using var operation = BeginPageOperation("插件 / 组件安装与配置");
         _isWorking = true;
         CancelPassiveLoads();
         ProgressBar_Overall.Value = 0;

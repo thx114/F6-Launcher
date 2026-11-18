@@ -26,7 +26,8 @@ public static class PackActionOncePolicy
         if (!fromPack) return true; // 显式手动 builtin 不因 PackRoot 非空受到影响。
         if (declaredPackAction == false || snapshot is null || !snapshot.MatchesRoot(packRoot)
             || (expectedHash is not null && expectedHash != snapshot.Hash)
-            || (action.OriginSnapshot is { } origin && (origin.Hash != snapshot.Hash || !origin.MatchesRoot(packRoot))))
+            || (action.OriginSnapshot is { } origin && (origin.Hash != snapshot.Hash
+                || origin.BatchIdentity != snapshot.BatchIdentity || !origin.MatchesRoot(packRoot))))
             return false;
         var canonical = snapshot.CaptureAction(action);
         if (canonical is null) return false;

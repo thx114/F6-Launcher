@@ -5,6 +5,9 @@ using System.Linq;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
+using System.IO;
+using System.Text.Json;
+using HoYoShadeHub.Core.Networking;
 
 namespace HoYoShadeHub.Helpers;
 
@@ -22,6 +25,36 @@ public class CloudProxyManager
     private static readonly string[] GhAkamsCnProxies = ["https://github.akams.cn"];
 
     private static readonly Random _random = new Random();
+    private static readonly ConcurrentDictionary<string, AsyncValueCache<long>> Latencies = new();
+
+    public static Task<long> PingServerCachedAsync(int serverIndex, HttpClient client)
+    {
+        string key = $"{serverIndex}-{AppConfig.EnableDoh}-{AppConfig.EnableEch}-{AppConfig.DohProvider}";
+        return Latencies.GetOrAdd(key, _ => new()).GetAsync(async () =>
+        {
+            string path = Path.Combine(AppConfig.UserDataFolder, ".hysx", "network", "latency-" + key + ".json");
+            try
+            {
+                var cached = JsonSerializer.Deserialize<LatencyEntry>(await File.ReadAllTextAsync(path));
+                if (cached is not null && DateTimeOffset.UtcNow < cached.Expires) return cached.Value;
+            }
+            catch (IOException) { }
+            catch (JsonException) { }
+            catch (UnauthorizedAccessException) { }
+            long result = await PingServerAsync(serverIndex, client).ConfigureAwait(false);
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                await File.WriteAllTextAsync(path, JsonSerializer.Serialize(new LatencyEntry(result,
+                    DateTimeOffset.UtcNow.AddMinutes(result >= 0 ? 10 : 1))));
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+            return result;
+        }, TimeSpan.FromMinutes(1));
+    }
+
+    private sealed record LatencyEntry(long Value, DateTimeOffset Expires);
 
     /// <summary>
     /// 最近失败过的下载服务器（序号  失败时间）。
@@ -221,7 +254,7 @@ public class CloudProxyManager
             // Send HEAD request to avoid downloading the whole page if possible, 
             // but GET is safer for just a quick success.html
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            var request = new HttpRequestMessage(HttpMethod.Get, pingUrl);
+            using var request = new HttpRequestMessage(HttpMethod.Get, pingUrl);
             // Disable keep-alive to avoid connection reuse skewing the latency
             request.Headers.ConnectionClose = true;
             using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cts.Token);

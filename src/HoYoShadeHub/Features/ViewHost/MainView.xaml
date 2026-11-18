@@ -189,6 +189,8 @@
 
         <sfg:GameSelector x:Name="GameSelector" CurrentGameChanged="GameSelector_CurrentGameChanged" />
 
+        <local:NetworkRequestPanel Margin="0,0,12,10" HorizontalAlignment="Right" VerticalAlignment="Bottom" />
+
 
     </Grid>
 

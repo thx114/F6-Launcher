@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using HoYoShadeHub.RPC.GameInstall;
+using HoYoShadeHub.Extensions.Games;
 using System;
 using System.Windows.Input;
 
@@ -43,7 +44,7 @@ public sealed partial class StartGameButton : UserControl
 
     public string? RunningGameInfo { get; set => SetProperty(ref field, value); }
 
-    public bool IsGameProcessUnverified
+    public GameProcessDisplayState GameProcessDisplay
     {
         get;
         set { if (SetProperty(ref field, value)) OnPropertyChanged(nameof(StartGameButtonText)); }
@@ -114,7 +115,12 @@ public sealed partial class StartGameButton : UserControl
                 : IsWaitProcessOnlyMode
                     ? "启动（只等进程注入）"
                     : IsShaderOnlyLaunchMode ? Lang.LauncherPage_StartMod : Lang.LauncherPage_StartGame,
-        GameState.GameIsRunning => IsGameProcessUnverified ? "游戏进程状态待确认" : Lang.LauncherPage_GameIsRunning,
+        GameState.GameIsRunning => GameProcessDisplay switch
+        {
+            GameProcessDisplayState.NoWindow => "游戏进程仍在（无窗口）",
+            GameProcessDisplayState.Unknown => "游戏进程状态待确认",
+            _ => Lang.LauncherPage_GameIsRunning,
+        },
         GameState.InstallGame => Lang.InstallGameDialog_LocateGame,
         GameState.UpdateGame => Lang.LauncherPage_UpdateGame,
         GameState.UpdatePlugin => "Update Plugins",

@@ -27,6 +27,7 @@ namespace HoYoShadeHub;
 /// </summary>
 public static class Program
 {
+    internal static bool ResumingLightweight { get; private set; }
 
 
     /// <summary>提权副本标记：后面跟接力文件路径，输出经它回流到原控制台。</summary>
@@ -52,6 +53,10 @@ public static class Program
             Console.Error.WriteLine(ex.Message);
             return 1;
         }
+
+        // 收尾是独立的无界面任务，不能落入提权、单实例激活或 WinUI 启动。
+        int finishIndex = Array.IndexOf(args, "--finish-lightweight");
+        if (finishIndex >= 0) return FinishLightweightSession(args, finishIndex);
 
         // 多人/反作弊游戏后台守卫：只读轮询进程名，发现即暂停一切注入/解锁
         Features.GameLauncher.MultiplayerGameGuard.EnsureStarted();
@@ -127,6 +132,12 @@ public static class Program
             catch { }
         }
 
+        int resumeIndex = Array.IndexOf(args, "--resume-ui");
+        if (resumeIndex >= 0)
+        {
+            ResumingLightweight = true;
+            args = args.Where((_, i) => i != resumeIndex).ToArray();
+        }
         RemoteCatalogService.SeedFromBundle();
         RemoteCatalogService.ApplyDllFingerprints();
 
@@ -235,24 +246,7 @@ public static class Program
             return 0;
         }
 
-        // 只在主 GUI 实例启动时清理旧动作；第二实例、CLI、覆盖包导入均不调用。
-        // 在窗口创建前完成，运行期间新安装的覆盖包不会再被这次清理删除。
-        try
-        {
-            string userRoot = AppConfig.UserDataFolder ?? string.Empty;
-            string cacheRoot = AppConfig.CacheRoot;
-            int deleted = PackAutoStartupCleanup.DeleteExisting(
-                string.IsNullOrWhiteSpace(cacheRoot) ? null : Path.Combine(cacheRoot, "games"),
-                userRoot.Length == 0 ? null : Path.Combine(userRoot, "GamePack"),
-                userRoot.Length == 0 ? null : Path.Combine(userRoot, ".hysx", "cache", "games"));
-            AppConfig.GetLogger<App>().LogInformation("Startup auto.json cleanup: {Count} files deleted", deleted);
-        }
-        catch (Exception ex)
-        {
-            AppConfig.GetLogger<App>().LogError(ex, "Startup auto.json cleanup failed; startup stopped");
-            Console.Error.WriteLine("旧版 auto.json 清理失败，请关闭占用程序并检查目录权限后重试：" + ex.Message);
-            return 1;
-        }
+        // auto.json 的资格由快照/同意/批次账本决定；启动不再递归扫描或删除覆盖包动作。
 
         global::WinRT.ComWrappersSupport.InitializeComWrappers();
         global::Microsoft.UI.Xaml.Application.Start((p) =>
@@ -262,6 +256,27 @@ public static class Program
             new App();
         });
         return 0;
+    }
+
+    private static int FinishLightweightSession(string[] args, int finishIndex)
+    {
+        try
+        {
+            AppConfig.EnsureLoggingInitialized();
+            if (finishIndex + 1 >= args.Length)
+                throw new ArgumentException("Missing lightweight session handoff path.");
+            var plan = System.Text.Json.JsonSerializer.Deserialize(File.ReadAllText(args[finishIndex + 1]),
+                F6Launcher.Background.BackgroundJson.Default.GameWatch)
+                ?? throw new InvalidDataException("Missing lightweight session plan.");
+            GameSessionLogCollector.FinishBackgroundSession(plan);
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Error(ex, "Finalize lightweight game session");
+            return 1;
+        }
+        finally { Serilog.Log.CloseAndFlush(); }
     }
 
     /// <summary>

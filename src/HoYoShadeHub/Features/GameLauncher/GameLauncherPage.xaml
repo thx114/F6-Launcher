@@ -525,7 +525,7 @@
                                    GameCommand="{x:Bind ClickStartGameButtonCommand}"
                                    GameState="{x:Bind GameState}"
                                    RunningGameInfo="{x:Bind RunningGameInfo}"
-                                   IsGameProcessUnverified="{x:Bind IsGameProcessUnverified}"
+                                   GameProcessDisplay="{x:Bind GameProcessDisplay}"
                                    SettingCommand="{x:Bind OpenGameLauncherSettingDialogCommand}"
                                    CloseGameCommand="{x:Bind CloseGameCommand}"
                                    IsClosingGame="{x:Bind IsClosingGame}" />

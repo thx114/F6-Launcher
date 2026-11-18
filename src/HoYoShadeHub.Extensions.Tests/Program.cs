@@ -19,6 +19,9 @@ if (args.Length == 3 && args[0] == "launch-nr-probe")
 if (args.Length == 1 && args[0] == "launch-preparation-tests")
     return HoYoShadeHub.Extensions.Tests.LaunchPreparationTests.Run();
 
+if (args.Length > 0 && args[0] == "pack-lifecycle-tests")
+    return await HoYoShadeHub.Extensions.Tests.PackLifecycleContractTests.RunAsync(args);
+
 if (args.Length == 1 && args[0] == "game-process-helper")
 {
     Console.WriteLine("ready");
@@ -79,8 +82,9 @@ if (args.Length == 1 && args[0] == "package-drop-tests")
     return 0;
 }
 
-if (args.Length == 1 && args[0] == "mod-preview-tests")
-    return HoYoShadeHub.Extensions.Tests.ModPreviewTests.Run();
+if (args.Length is 1 or 5 && args[0] == "mod-preview-tests")
+    return args.Length == 1 ? HoYoShadeHub.Extensions.Tests.ModPreviewTests.Run()
+        : HoYoShadeHub.Extensions.Tests.ModPreviewTests.Run(args[1], args[2], args[3], args[4]);
 
 if (args.Length > 0 && args[0] == "mod-directory-tests")
     return HoYoShadeHub.Extensions.Tests.ModDirectoryPolicyTests.Run(Path.Combine(Path.GetTempPath(), "mod-category-tests-" + Guid.NewGuid().ToString("N")), args.Length > 1 ? args[1] : null);
@@ -106,6 +110,9 @@ if (args.Length > 0 && args[0] is "uid-pipe-tests" or "uid-foreign-client" or "u
 if (args.Length == 1 && args[0] == "genshin-graphics-tests")
     return HoYoShadeHub.Extensions.Tests.GenshinGraphicsSettingsTests.Run();
 
+if (args.Length == 1 && args[0] == "starrail-graphics-tests")
+    return HoYoShadeHub.Extensions.Tests.StarRailGraphicsSettingsTests.Run();
+
 if (args.Length == 1 && args[0] == "genshin-graphics-snapshot")
     return HoYoShadeHub.Extensions.Tests.GenshinGraphicsSettingsTests.ValidateLocalSnapshot();
 
@@ -130,6 +137,9 @@ if (args.Length == 1 && args[0] == "pack-consent-migration-tests")
 
 if (args.Length == 1 && args[0] == "ui-runtime-tests")
     return (await HoYoShadeHub.Extensions.Tests.UiRuntimeTests.RunAsync()).Failed == 0 ? 0 : 1;
+
+if (args.Length == 1 && args[0] == "module-identity-tests")
+    return HoYoShadeHub.Extensions.Tests.ModuleDllIdentityTests.Run();
 
 if (args.Length == 1 && args[0] == "opti-page-loading-tests")
     return HoYoShadeHub.Extensions.Tests.OptiPageLoadingTests.Run();
@@ -3792,7 +3802,9 @@ Check(syncedPresets == 2 && File.Exists(Path.Combine(ucPackAddons, "DLSS5-Preset
     "presets\\ 递归复制进 DLSS5-Presets");
 Check(GameAddonPackUserContent.SyncPresets(ucPackRoot, ucPackAddons) == 0, "重复同步幂等（内容一致不重写）");
 File.WriteAllText(Path.Combine(ucPackRoot, "presets", "a.ini"), "[A]\nB=2\n");
-Check(GameAddonPackUserContent.SyncPresets(ucPackRoot, ucPackAddons) == 1, "内容变了会更新");
+Check(GameAddonPackUserContent.SyncPresets(ucPackRoot, ucPackAddons) == 0, "同批次内容改变不重新授权覆盖预设");
+PackApplicationBatch.BeginImport(ucPackRoot); // 模拟安装器完整提交显式新批次。
+Check(GameAddonPackUserContent.SyncPresets(ucPackRoot, ucPackAddons) == 1, "显式新批次可更新预设");
 Check(File.ReadAllText(Path.Combine(ucPackAddons, "DLSS5-Presets", "a.ini")) == "[A]\nB=2\n",
     "更新后的预设内容一致");
 

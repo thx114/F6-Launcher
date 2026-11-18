@@ -587,9 +587,10 @@ public static class GameIniBootstrap
                 return;
             }
 
-            if (GamePackIniConfig.Load(packRoot) is { } config && config.Apply(ini))
+            if (GamePackIniConfig.Load(packRoot) is { } config)
             {
-                result.AppliedPackIniConfig = true;
+                using var batch = PackApplicationBatch.Open(packRoot);
+                result.AppliedPackIniConfig = batch.ApplyOnce("ini_config", () => config.ApplyStrict(ini));
             }
 
             int imported = GameAddonPackUserContent.SyncPresets(packRoot, addonDir);

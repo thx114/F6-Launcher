@@ -110,11 +110,26 @@
 
                         <StackPanel Grid.Column="1" Grid.Row="0" Spacing="6">
                             <!-- 第一行：同一种 Opt 只显示一个来源标题。 -->
-                            <StackPanel Orientation="Horizontal" Spacing="6">
-                                <TextBlock Style="{ThemeResource BodyStrongTextBlockStyle}"
+                            <Grid ColumnSpacing="6">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0"
+                                           Style="{ThemeResource BodyStrongTextBlockStyle}"
                                            Text="{x:Bind Title, Mode=OneWay}"
                                            TextTrimming="CharacterEllipsis" />
-                                <Border Padding="6,1"
+                                <TextBlock Grid.Column="1"
+                                           VerticalAlignment="Center"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                           Style="{ThemeResource CaptionTextBlockStyle}"
+                                           Text="{x:Bind Detail, Mode=OneWay}"
+                                           TextTrimming="CharacterEllipsis"
+                                           ToolTipService.ToolTip="{x:Bind Detail, Mode=OneWay}" />
+                                <Border Grid.Column="2" Padding="6,1"
                                         VerticalAlignment="Center"
                                         Background="{ThemeResource AccentFillColorDefaultBrush}"
                                         CornerRadius="3"
@@ -123,22 +138,17 @@
                                                Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}"
                                                Text="使用中" />
                                 </Border>
-                                <TextBlock VerticalAlignment="Center"
+                                <TextBlock Grid.Column="3" VerticalAlignment="Center"
                                            Foreground="{ThemeResource TextFillColorTertiaryBrush}"
                                            Style="{ThemeResource CaptionTextBlockStyle}"
                                            Text="{x:Bind TagsText}"
                                            TextTrimming="CharacterEllipsis" />
-                                <TextBlock VerticalAlignment="Center"
+                                <TextBlock Grid.Column="4" VerticalAlignment="Center"
                                            Foreground="{ThemeResource SystemFillColorCautionBrush}"
                                            Style="{ThemeResource CaptionTextBlockStyle}"
                                            Text="这个包里没有 OptiScaler.dll"
                                            Visibility="{x:Bind DllMissingVisibility, Mode=OneWay}" />
-                            </StackPanel>
-                            <!--  第二行：这一版装在哪 / 注入哪个文件  -->
-                            <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                       Style="{ThemeResource CaptionTextBlockStyle}"
-                                       Text="{x:Bind Detail, Mode=OneWay}"
-                                       TextTrimming="CharacterEllipsis" />
+                            </Grid>
 
                             <StackPanel Orientation="Horizontal" Spacing="6" Tapped="Settings_Tapped">
                                 <TextBlock VerticalAlignment="Center"
@@ -150,6 +160,8 @@
                                           SelectedItem="{x:Bind SelectedBuildOption, Mode=TwoWay}"
                                           AutomationProperties.Name="选择本游戏的 OptiScaler 版本"
                                           ToolTipService.ToolTip="切换本游戏使用的此 Opt 版本；配置编辑不会改变 Opt 选择" />
+                                <TextBlock VerticalAlignment="Center" Style="{ThemeResource CaptionTextBlockStyle}" Text="NR：" />
+                                <ComboBox x:Name="ComboBox_NrVersion" Width="160" VerticalAlignment="Center" Loaded="ComboBox_Nr_Loaded" SelectionChanged="ComboBox_Nr_SelectionChanged" IsEnabled="{x:Bind SettingsEnabled, Mode=OneWay}" ToolTipService.ToolTip="选择本游戏 NR 版本；选择后立即保存，重启游戏生效" AutomationProperties.Name="NR 版本" />
                             </StackPanel>
 
                             <!-- 配置区的空白和说明文字也不参与构建选择。 -->
@@ -172,7 +184,6 @@
                                            Style="{ThemeResource CaptionTextBlockStyle}"
                                            Text="{x:Bind CurrentProfileText, Mode=OneWay}"
                                            TextTrimming="CharacterEllipsis" />
-                                <ComboBox x:Name="ComboBox_NrVersion" Width="160" VerticalAlignment="Center" Loaded="ComboBox_Nr_Loaded" SelectionChanged="ComboBox_Nr_SelectionChanged" IsEnabled="{x:Bind SettingsEnabled, Mode=OneWay}" ToolTipService.ToolTip="选择本游戏 NR 版本；选择后立即保存，重启游戏生效" AutomationProperties.Name="NR 版本" />
                                 </StackPanel>
                             </StackPanel>
 
@@ -211,6 +222,7 @@
 
                             <!--  扩展配置：只实例化每行实际需要的编辑器。  -->
                             <StackPanel x:Name="OptiQuickConfig" Grid.Row="1" Tapped="Settings_Tapped"
+                                        x:Load="{x:Bind Expanded, Mode=OneWay}"
                                         Grid.ColumnSpan="3"
                                         Margin="0,6,0,0"
                                         Spacing="6"

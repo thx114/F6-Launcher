@@ -75,6 +75,8 @@ public sealed partial class AppBackground : UserControl
         if (!_lifetime.Exit()) return;
         _updates.Cancel();
         DisposeVideoResource();
+        BackgroundImageSource = null;
+        PlacehoderImageSource = null;
         if (_attachedRoot is not null) _attachedRoot.Changed -= XamlRoot_Changed;
         _attachedRoot = null;
         _lastBackgroundFile = null;
@@ -121,6 +123,9 @@ public sealed partial class AppBackground : UserControl
             SetProperty(ref field, value);
         }
     }
+
+    // ImageEx 0.1.0 changes to Unloaded and cancels its current load when
+    // PlaceholderSource is cleared. Release both sources only on Unloaded.
 
     public bool IsUpdateBackgroundRunning { get; set => SetProperty(ref field, value); }
 
@@ -183,6 +188,21 @@ public sealed partial class AppBackground : UserControl
                 DisposeVideoResource();
                 BackgroundImageSource = new BitmapImage(new Uri("ms-appx:///Assets/Image/UI_CutScene_1130320101A.png"));
                 return;
+            }
+
+            // Show the selected game's local image before any metadata request.
+            // Switching games must not wait for HoYoPlay or replace a valid cached image on timeout.
+            if (background is null && BackgroundService.GetCachedBackgroundFile(gameId) is { } cachedFile
+                && !BackgroundService.FileIsSupportedVideo(cachedFile)
+                && (cachedFile != _lastBackgroundFile || _lastScale != this.XamlRoot.GetUIScaleFactor()))
+            {
+                DisposeVideoResource();
+                BackgroundImageSource = null;
+                await ChangeBackgroundImageAsync(cachedFile, cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
+                _lastBackgroundFile = cachedFile;
+                _lastScale = this.XamlRoot.GetUIScaleFactor();
+                CurrentGameBackground = null;
             }
 
             for (int i = 0; i < 2; i++)
@@ -288,6 +308,7 @@ public sealed partial class AppBackground : UserControl
 
     private async Task ChangeBackgroundImageAsync(string file, CancellationToken cancellationToken)
     {
+        var imageTiming = Stopwatch.StartNew();
         cancellationToken.ThrowIfCancellationRequested();
 
         using var fs = File.OpenRead(file);
@@ -346,6 +367,8 @@ public sealed partial class AppBackground : UserControl
             AppConfig.AccentColor = color?.ToHex() ?? null;
             BackgroundImageSource = softwareBitmapSource;
         }
+        _logger.LogInformation("Background image assigned: {File}, decode={Width}x{Height}, elapsedMs={ElapsedMs:F1}",
+            Path.GetFileName(file), decodeWidth, decodeHeight, imageTiming.Elapsed.TotalMilliseconds);
     }
 
 

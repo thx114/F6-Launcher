@@ -85,32 +85,41 @@ public sealed class OptiScalerLibrary
 
     public bool Exists => RootPath.Length > 0 && Directory.Exists(RootPath);
 
+    /// <summary>只检查是否存在可用主 DLL；不读清单、不排序、不统计目录大小。</summary>
+    public bool HasInstalledBuild(CancellationToken cancellationToken = default)
+        => EnumerateBuildDirectories(cancellationToken).Any(b => FindDll(b.BuildDirectory) is not null);
+
     /// <summary>扫一遍库里的所有构建（新装的排前面）。目录不存在就返回空表。</summary>
     public List<OptiScalerBuild> List(bool includeDirectorySize = true, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var builds = new List<OptiScalerBuild>();
-        if (!Exists)
+        foreach (var (sourceDir, versionDir) in EnumerateBuildDirectories(cancellationToken))
         {
-            return builds;
-        }
-
-        foreach (string sourceDir in Directory.EnumerateDirectories(RootPath))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            // 只有「来源目录」下面一层才是构建
-            foreach (string versionDir in Directory.EnumerateDirectories(sourceDir))
+            OptiScalerBuild? build = TryReadBuild(sourceDir, versionDir, includeDirectorySize);
+            if (build is not null)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                OptiScalerBuild? build = TryReadBuild(sourceDir, versionDir, includeDirectorySize);
-                if (build is not null)
-                {
-                    builds.Add(build);
-                }
+                builds.Add(build);
             }
         }
 
         return [.. builds.OrderByDescending(b => b.InstalledAt).ThenBy(b => b.Id, StringComparer.OrdinalIgnoreCase)];
+    }
+
+    private IEnumerable<(string SourceDirectory, string BuildDirectory)> EnumerateBuildDirectories(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!Exists) yield break;
+        foreach (string sourceDir in Directory.EnumerateDirectories(RootPath))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            // 只有「来源目录」下面一层才是构建。
+            foreach (string versionDir in Directory.EnumerateDirectories(sourceDir))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                yield return (sourceDir, versionDir);
+            }
+        }
     }
 
     /// <summary>当前启用的那个（state.json 里记的）；没启用 / 目录已经没了 → null</summary>
@@ -126,7 +135,7 @@ public sealed class OptiScalerLibrary
     }
 
     /// <summary>当前启用构建的主 DLL 路径（没启用 / 包里没有 dll → null）</summary>
-    public string? SelectedDllPath => GetSelected()?.DllPath;
+    public string? SelectedDllPath => GetSelected(includeDirectorySize: false)?.DllPath;
 
     /// <summary>把它设成唯一启用的那个；<paramref name="id"/> 为 null/空 = 取消启用。</summary>
     public void Select(string? id)
@@ -137,7 +146,7 @@ public sealed class OptiScalerLibrary
             return;
         }
 
-        if (List().All(b => !string.Equals(b.Id, id, StringComparison.OrdinalIgnoreCase)))
+        if (List(includeDirectorySize: false).All(b => !string.Equals(b.Id, id, StringComparison.OrdinalIgnoreCase)))
         {
             throw new InvalidOperationException($"库里没有这个 OptiScaler 构建：{id}");
         }
@@ -148,7 +157,7 @@ public sealed class OptiScalerLibrary
     /// <summary>删掉一个构建（顺带清掉指向它的选择）。</summary>
     public bool Delete(string id)
     {
-        OptiScalerBuild? build = List().FirstOrDefault(b => string.Equals(b.Id, id, StringComparison.OrdinalIgnoreCase));
+        OptiScalerBuild? build = List(includeDirectorySize: false).FirstOrDefault(b => string.Equals(b.Id, id, StringComparison.OrdinalIgnoreCase));
         if (build is null)
         {
             return false;
@@ -196,26 +205,26 @@ public sealed class OptiScalerLibrary
 
     /// <summary>在构建目录里找 OptiScaler 的主 DLL（可能在子目录里）。</summary>
     public static string? FindDll(string buildDirectory)
-    {        if (!Directory.Exists(buildDirectory))
+    {
+        if (!Directory.Exists(buildDirectory))
         {
             return null;
         }
 
-        List<string> dlls;
+        var dlls = new List<string>();
         try
         {
-            dlls = [.. Directory.EnumerateFiles(buildDirectory, "*.dll", SearchOption.AllDirectories)];
+            foreach (string file in Directory.EnumerateFiles(buildDirectory, "*.dll", SearchOption.AllDirectories))
+            {
+                // 正常安装的根目录主 DLL 命中后即可返回，不遍历 NR、插件及配置子树。
+                if (string.Equals(Path.GetFileName(file), "OptiScaler.dll", StringComparison.OrdinalIgnoreCase))
+                    return file;
+                dlls.Add(file);
+            }
         }
         catch
         {
             return null;
-        }
-
-        // ① 正主
-        string? exact = dlls.FirstOrDefault(f => string.Equals(Path.GetFileName(f), "OptiScaler.dll", StringComparison.OrdinalIgnoreCase));
-        if (exact is not null)
-        {
-            return exact;
         }
 
         // ② 带后缀的变体（OptiScaler.DLSSNR.dll 之类）

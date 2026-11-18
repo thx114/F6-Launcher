@@ -47,7 +47,7 @@ public sealed class GithubVersionInfo
 ///
 /// <para>
 /// 「安装」= 把 zip 解压到便携包根目录：会多出一个 <c>app-&lt;版本&gt;\</c> 目录并改写 <c>version.ini</c>，
-/// **旧版本目录原样留着** —— 所以退回就是再装一个旧版本（或者把 version.ini 指回去）。
+/// 新界面成功加载后，后台保留当前版、一个回退版和仍在运行的版本，回收其它旧目录。
 /// 装之前会把当前 version.ini 备份到 <c>&lt;用户数据目录&gt;\.hysx\update-backup\</c>。
 /// </para>
 /// </summary>
@@ -176,8 +176,9 @@ internal sealed class GithubUpdateService
         string? strip = null;
         List<string> leftovers = [];
 
-        await Task.Run(() =>
+        await Task.Run(async () =>
         {
+            using FileStream maintenance = await PortableUpdatePolicy.AcquireMaintenanceAsync(root, cancellationToken).ConfigureAwait(false);
             using ZipArchive archive = ZipFile.OpenRead(zipPath);
             strip = DetectWrapperPrefix(archive);
 

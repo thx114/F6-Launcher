@@ -269,8 +269,9 @@ public sealed partial class ModulesPage : PageBase
         _gameId = e.Parameter as GameId;
 
         _navigated = true;
-        Load();
     }
+
+    protected override void OnLoaded() => Load();
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {

@@ -94,11 +94,13 @@ internal sealed class GameSessionLogCollector
     private readonly string _exePath;
     private readonly string? _commandLine;
     private readonly string? _gameKey;
+    private readonly F6Launcher.Background.ProfileWriteback[] _profileWritebacks;
 
     private Process? _targetProcess;
     private Timer? _timer;
     private readonly bool _manual;
     private volatile bool _finished;
+    private volatile bool _transferred;
 
     private GameSessionLogCollector(
         GameId? gameId, int pid, string processName, string? exePath, string? commandLine, Process? process,
@@ -123,6 +125,11 @@ internal sealed class GameSessionLogCollector
         _processName = string.IsNullOrWhiteSpace(processName) ? $"pid{pid}" : processName.Trim();
         _commandLine = commandLine;
         _gameKey = gameId?.GameBiz.Value;
+        string? selectedOptiDll = gameId is null ? null : AppConfig.GetSelectedOptiScalerDll(gameId);
+        _profileWritebacks = !string.IsNullOrWhiteSpace(_gameKey)
+            && !string.IsNullOrWhiteSpace(selectedOptiDll)
+            && Path.GetDirectoryName(selectedOptiDll) is { Length: > 0 } selectedBuild
+            ? [new(selectedBuild, _gameKey)] : [];
 
         // 进程真实路径优先（启动器里的 exe 名可能只是 "YuanShen"）；取不到再退回安装目录拼。
         string? resolvedExe = exePath;
@@ -206,6 +213,7 @@ internal sealed class GameSessionLogCollector
     public static GameSessionLogCollector? Begin(
         GameId? gameId, int pid, string processName, string? exePath = null, string? commandLine = null, Process? process = null)
     {
+        using var backgroundWork = BackgroundModeCoordinator.BeginLaunchWork();
         GameUidReportServer.Begin(gameId, pid);
         if (pid <= 0)
         {
@@ -221,8 +229,14 @@ internal sealed class GameSessionLogCollector
                     return existing;
                 }
 
-                var session = new GameSessionLogCollector(gameId, pid, processName, exePath, commandLine, process);
+                GameSessionLogCollector session;
+                var inherited = BackgroundModeCoordinator.InheritedSession(pid);
+                using var identity = Process.GetProcessById(pid);
+                if (inherited?.SessionDirectory is not null && inherited.StartTicks == identity.StartTime.ToUniversalTime().Ticks)
+                    session = new GameSessionLogCollector(inherited) { _transferred = true };
+                else session = new GameSessionLogCollector(gameId, pid, processName, exePath, commandLine, process);
                 Active[pid] = session;
+                _ = BackgroundModeCoordinator.RegisterAsync(session.ExportBackgroundPlan());
                 return session;
             }
         }
@@ -254,10 +268,63 @@ internal sealed class GameSessionLogCollector
         }
     }
 
+    private F6Launcher.Background.GameWatch ExportBackgroundPlan()
+    {
+        long startTicks;
+        using (var process = Process.GetProcessById(_pid)) startTicks = process.StartTime.ToUniversalTime().Ticks;
+        return new(_pid, startTicks, _gameKey ?? string.Empty, SessionDirectory, _startedAt.UtcTicks,
+            _logs.Concat(_configs).Select(s => new F6Launcher.Background.SnapshotFile(s.Name,
+                s.OptiLog?.Path ?? s.Path, s.IsLog, s.OptiLog?.Multiple ?? false)).ToArray(),
+            _optiScalerDumpDirectories.ToArray(), _optiScalerDirectories.ToArray(),
+            HoYoShadeHub.Features.Database.DatabaseService.DatabasePath,
+            _profileWritebacks);
+    }
+
+    internal static async Task TransferToBackgroundAsync()
+    {
+        foreach (var session in Active.Values)
+        {
+            if (session._finished || session._transferred) continue;
+            var reply = await BackgroundModeCoordinator.SendAsync(new() { Command = "transfer", Game = session.ExportBackgroundPlan() });
+            if (!reply.Success) throw new IOException(reply.Error);
+            session._timer?.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+            lock (session._snapshotGate) session._transferred = true;
+        }
+    }
+
+    // Reuse the existing freshness, dump, digest and profile rules when the native
+    // host returns control. This constructor resumes the same session directory.
+    private GameSessionLogCollector(F6Launcher.Background.GameWatch plan)
+    {
+        _pid = plan.Pid; _processName = "pid" + plan.Pid; _exePath = string.Empty;
+        _gameKey = plan.GameKey; _manual = true;
+        _profileWritebacks = plan.Profiles;
+        _startedAt = new DateTimeOffset(new DateTime(plan.StartedUtcTicks, DateTimeKind.Utc));
+        SessionDirectory = plan.SessionDirectory ?? throw new IOException("Missing background session directory");
+        _logs = plan.Files.Where(f => f.IsLog).Select(f => new SnapshotSource(f.Name, f.Path,
+            f.Multiple ? new OptiScalerSessionLogPath(f.Path, true) : null, true)).ToList();
+        _configs = plan.Files.Where(f => !f.IsLog).Select(f => new SnapshotSource(f.Name, f.Path, null, false)).ToList();
+        _bridgeDirectories = [];
+        _optiScalerDirectories = plan.OptiDirectories.ToList();
+        _optiScalerDumpDirectories = plan.DumpDirectories.ToList();
+        _manifest = new SessionLogManifest(SessionDirectory, ManifestName);
+        _entries = BuildEntries();
+    }
+
+    internal static void FinishBackgroundSession(F6Launcher.Background.GameWatch plan)
+    {
+        foreach (var profile in plan.Profiles)
+        {
+            if (OptiScalerProfiles.Store(profile.RuntimeDirectory, profile.GameKey))
+                HoYoShadeHub.Features.OptiScaler.OptiScalerPresets.Follow(profile.RuntimeDirectory, profile.GameKey);
+        }
+        new GameSessionLogCollector(plan).Finish("轻量后台检测到游戏退出");
+    }
+
     /// <summary>收尾：最后抄一次（进程退出那一刻的日志才算完整），停掉定时器并释放会话槽。</summary>
     public void Finish(string reason, int? exitCode = null)
     {
-        if (_finished)
+        if (_finished || _transferred)
         {
             return;
         }
@@ -380,7 +447,7 @@ internal sealed class GameSessionLogCollector
 
     private void OnTimerTick()
     {
-        if (_finished)
+        if (_finished || _transferred)
         {
             return;
         }

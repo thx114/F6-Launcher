@@ -4,7 +4,6 @@ using Microsoft.Extensions.Logging;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using System;
-using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
 
@@ -19,8 +18,6 @@ public sealed partial class GameLauncherPage
         try
         {
             var result = await RocketLaunchPreparation.PrepareAsync(game, _currentGameEntry);
-            // 不管找没找到 Rocket 都弹第三方加载器对话框：框里的 DLL 路径可以直接配 SSMT 等。
-            await ShowThirdPartyLoaderDialogAsync(result.DllPaths);
             if (!result.Success)
             {
                 _logger.LogWarning("Rocket 联动准备失败 ConfigPath={ConfigPath} BackupPath={BackupPath}: {Status}", result.ConfigPath, result.BackupPath, result.Message);
@@ -44,51 +41,6 @@ public sealed partial class GameLauncherPage
         }
     }
 
-    /// <summary>第三方模组加载器对话框：一个显示当前 DLL 路径的输入框 + 一个复制图标按钮 + 使用提示。仅展示/复制，不做任何修改。</summary>
-    private async Task ShowThirdPartyLoaderDialogAsync(IReadOnlyList<string>? dllPaths)
-    {
-        if (dllPaths is null) return;
-        string text = dllPaths.Count > 0
-            ? string.Join("|", dllPaths)
-            : "(没有可显示的 DLL：请先在左侧「模块 / OptiScaler / HoYoShade」选好要加载的内容再准备)";
-        var box = new TextBox { Text = text, MinWidth = 520 };
-        var copy = new Button { Content = new FontIcon { Glyph = "\uE8C8", FontSize = 14 } };
-        ToolTipService.SetToolTip(copy, "复制到剪贴板");
-        copy.Click += async (_, _) =>
-        {
-            try
-            {
-                ClipboardHelper.SetText(box.Text);
-                copy.Content = new FontIcon { Glyph = "\uE8F7", FontSize = 14 };
-                await Task.Delay(1500);
-                copy.Content = new FontIcon { Glyph = "\uE8C8", FontSize = 14 };
-            }
-            catch (Exception copyEx) { _logger.LogWarning(copyEx, "Copy third-party loader DLL path"); }
-        };
-        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        row.Children.Add(box);
-        row.Children.Add(copy);
-        var hint = new TextBlock
-        {
-            Text = dllPaths.Count > 1
-                ? "请把这些dll按顺序复制到你所用的第三方启动器的额外dll加载位置，它们会加载目前配置的所有东西。可能有一些无法和reshade或opt兼容的需要你手动在第三方启动器排查.."
-                : "请把此dll复制到你所用的第三方启动器的额外dll加载位置，此dll会加载目前配置的所有东西。可能有一些无法和reshade或opt兼容的需要你手动在第三方启动器排查..",
-            TextWrapping = TextWrapping.Wrap,
-            MaxWidth = 620,
-        };
-        var panel = new StackPanel { Spacing = 12 };
-        panel.Children.Add(row);
-        panel.Children.Add(hint);
-        var dialog = new ContentDialog
-        {
-            XamlRoot = XamlRoot,
-            Title = "第三方模组加载器（Rocket / SSMT 等）",
-            Content = panel,
-            CloseButtonText = "关闭",
-        };
-        await dialog.ShowAsync();
-    }
-
     private async void Button_RocketSettings_Click(object sender, RoutedEventArgs e)
     {
         if (UseXxmiInject) return;
@@ -110,7 +62,7 @@ public sealed partial class GameLauncherPage
             var error=new TextBlock { TextWrapping=TextWrapping.Wrap };
             var panel=new StackPanel { Spacing=12 };
             panel.Children.Add(path);panel.Children.Add(browse);
-            panel.Children.Add(new TextBlock { Text="只写 Rocket 的第三方 DLL 位置：原神写 FSR 桥 DLL 路径和启用开关；其他游戏（星铁/绝区零/鸣潮/终末地）写「<游戏名>插件DLL列表」，按顺序注入多份 DLL（OptiScaler 在前、ReShade 在后）。不修改 Rocket 的主 DLL、授权、网络或抓包设置。已运行的 Rocket 可能需要重新读取配置；Hub 不会替你关闭或重启它。", TextWrapping=TextWrapping.Wrap, MaxWidth=500 });
+            panel.Children.Add(new TextBlock { Text="填入Rocket的config.ini的位置，以便启动器填入对应项目", TextWrapping=TextWrapping.Wrap, MaxWidth=500 });
             panel.Children.Add(error);
             var dialog=new ContentDialog { XamlRoot=XamlRoot, Title="Rocket 联动设置",Content=panel,
                 PrimaryButtonText="保存",CloseButtonText="取消",DefaultButton=ContentDialogButton.Primary };

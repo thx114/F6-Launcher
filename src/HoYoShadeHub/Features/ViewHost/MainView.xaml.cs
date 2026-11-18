@@ -110,6 +110,7 @@ public sealed partial class MainView : UserControl, IShellFileDropTarget
         UpdateNavigationView();
         if (_startupChecksStarted) return;
         _startupChecksStarted = true;
+        PortableAppCleanupService.ScheduleAfterStartup(_lifetime.Token);
         // 版本更新引导：窗口已经显示之后**直接弹**（不能再放到插件页导航里，那样会把页面卡死）
         _ = CacheMigrationService.PromptIfNeededAsync(XamlRoot, _logger);
         CheckSystemProxy(_lifetime.Token);

@@ -4,6 +4,7 @@ using System.Diagnostics;
 namespace HoYoShadeHub.Extensions.Games;
 
 public enum GameProcessStatus { NotRunning, Running, Unknown }
+public enum GameProcessDisplayState { NotRunning, Running, NoWindow, Unknown }
 
 public readonly record struct GameProcessInspection(GameProcessStatus Status, string? Detail = null)
 {
@@ -70,6 +71,19 @@ public static class GameProcessDiscovery
     public static GameProcessInspection Inspect(Process process, int sessionId)
         => InspectCore(() => { process.Refresh(); return process.SessionId; },
             () => process.Threads.Count, () => process.HasExited, sessionId);
+
+    /// <summary>Window presence describes the UI; it never changes process lifetime or launch blocking.</summary>
+    public static GameProcessDisplayState InspectDisplay(Process process, GameProcessInspection inspection)
+        => InspectDisplayCore(inspection, () => process.MainWindowHandle);
+
+    internal static GameProcessDisplayState InspectDisplayCore(GameProcessInspection inspection, Func<nint> readWindow)
+    {
+        if (inspection.Status == GameProcessStatus.NotRunning) return GameProcessDisplayState.NotRunning;
+        if (inspection.Status == GameProcessStatus.Unknown) return GameProcessDisplayState.Unknown;
+        try { return readWindow() == 0 ? GameProcessDisplayState.NoWindow : GameProcessDisplayState.Running; }
+        catch (InvalidOperationException) { return GameProcessDisplayState.Unknown; }
+        catch (Win32Exception) { return GameProcessDisplayState.Unknown; }
+    }
 
     internal static GameProcessInspection InspectCore(Func<int> readSession, Func<int> readThreadCount,
         Func<bool> readExited, int sessionId)

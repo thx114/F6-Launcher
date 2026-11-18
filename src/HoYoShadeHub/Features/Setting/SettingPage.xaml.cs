@@ -19,8 +19,13 @@ public sealed partial class SettingPage : PageBase
     public SettingPage()
     {
         this.InitializeComponent();
-        Frame_Setting.Navigate(typeof(AboutSetting));
+        Frame_Setting.IsNavigationStackEnabled = false;
+    }
+
+    protected override void OnLoaded()
+    {
         WeakReferenceMessenger.Default.Register<LanguageChangedMessage>(this, (_, _) => OnLanguageChanged());
+        if (Frame_Setting.Content is null) Frame_Setting.Navigate(typeof(AboutSetting));
     }
 
 
@@ -98,7 +103,7 @@ public sealed partial class SettingPage : PageBase
                 nameof(HotkeySetting) => typeof(HotkeySetting),
                 _ => null,
             };
-            if (type is not null)
+            if (type is not null && Frame_Setting.SourcePageType != type)
             {
                 Frame_Setting.Navigate(type);
             }

@@ -209,9 +209,10 @@ public sealed class PackAutoActionSnapshot
     private readonly string _json;
     public string PackRoot { get; }
     public string Hash { get; }
+    public string BatchIdentity { get; }
 
-    private PackAutoActionSnapshot(string root, string json, string hash)
-        => (PackRoot, _json, Hash) = (root, json, hash);
+    private PackAutoActionSnapshot(string root, string json, string hash, string batchIdentity)
+        => (PackRoot, _json, Hash, BatchIdentity) = (root, json, hash, batchIdentity);
 
     // 与旧 PackActionConsent.ComputeHash 完全相同：原字节（含 BOM）的完整大写 SHA256。
     public static string ComputeHash(ReadOnlySpan<byte> bytes)
@@ -239,7 +240,7 @@ public sealed class PackAutoActionSnapshot
                 || steps.GetArrayLength() == 0 || steps.EnumerateArray().Any(step => step.ValueKind != JsonValueKind.Object
                     || !step.TryGetProperty("action", out var type) || type.ValueKind != JsonValueKind.String
                     || string.IsNullOrWhiteSpace(type.GetString())))) return null;
-            return new(root, json, ComputeHash(bytes));
+            return new(root, json, ComputeHash(bytes), PackApplicationBatch.ReadIdentity(root));
         }
         catch { return null; } // 解析/空/IO 失败没有可授权的快照。
     }
@@ -252,7 +253,8 @@ public sealed class PackAutoActionSnapshot
     }
 
     public bool IsCurrent(string? root, Func<string, byte[]>? readBytes = null)
-        => MatchesRoot(root) && TryLoad(root, readBytes)?.Hash == Hash;
+        => MatchesRoot(root) && TryLoad(root, readBytes) is { } current
+            && current.Hash == Hash && current.BatchIdentity == BatchIdentity;
 
     public bool MatchesRoot(string? root)
     {

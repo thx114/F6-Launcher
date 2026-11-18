@@ -1,6 +1,7 @@
 using HoYoShadeHub.Core;
 using HoYoShadeHub.Core.HoYoPlay;
 using HoYoShadeHub.Extensions;
+using HoYoShadeHub.Extensions.Dlls;
 using HoYoShadeHub.Extensions.Models;
 using HoYoShadeHub.Extensions.Networking;
 using HoYoShadeHub.Extensions.Services;
@@ -79,6 +80,9 @@ public sealed class ModuleEntry
     public bool IsBuiltin { get; init; }
 
     public ModuleDefinition? Definition { get; init; }
+
+    /// <summary>Catalog identity used for display and download deduplication, without changing manual selections.</summary>
+    public string? CatalogId { get; init; }
 
     /// <summary>要注入的 DLL（内置模块解析出来的，或手动加的那个路径）</summary>
     public string? DllPath { get; init; }
@@ -339,7 +343,6 @@ public static class ModuleRegistry
         // Prepare it here as soon as the Bridge is associated with the game, so a later
         // injection-list mismatch cannot leave the game with only Bridge hooks and no Opti.
         string bridgeDirectory = Path.GetDirectoryName(bridgeDll)!;
-        OptiScalerRuntime.EnsureFsrBridgeRenderScale(bridgeDirectory, AppConfig.GetGenshinBridgeRenderScale(gameId));
         if (AppConfig.GetUseOptiScalerLaunchOption(gameId)
             && AppConfig.GetSelectedOptiScalerDll(gameId) is { Length: > 0 } selectedOpti)
         {
@@ -372,8 +375,9 @@ public static class ModuleRegistry
     public static List<ModuleEntry> List()
     {
         var entries = new List<ModuleEntry>();
+        List<ModuleDefinition> catalog = All();
 
-        foreach (ModuleDefinition module in All())
+        foreach (ModuleDefinition module in catalog)
         {
             entries.Add(new ModuleEntry
             {
@@ -384,6 +388,7 @@ public static class ModuleRegistry
                 Homepage = module.Homepage,
                 IsBuiltin = true,
                 Definition = module,
+                CatalogId = module.Id,
                 DllPath = ResolveDllPath(module),
                 GloballyEnabled = module.Enabled,
             });
@@ -394,13 +399,11 @@ public static class ModuleRegistry
             bool exists = File.Exists(path);
             string fileName = Path.GetFileName(path);
 
-            // 需求3：手动加的 DLL 如果文件名能对上目录里某个模块要装的 DLL，
-            // 就把它当成那个模块 —— 复用可下载卡片的介绍 / 标签 / 主页，
-            // 界面上显示的也是模块本名，而不是一串裸文件名。
-            // 版本号未知没关系，先留空，PE 里读到就显示。
-            ModuleDefinition? matched = All().FirstOrDefault(
-                m => !string.IsNullOrWhiteSpace(m.DllHint)
-                     && string.Equals(Path.GetFileName(m.DllHint), fileName, StringComparison.OrdinalIgnoreCase));
+            // A shared proxy name (version.dll, dxgi.dll, ...) is not product identity.
+            string? catalogId = ModuleDllIdentity.FindUniqueCatalogId(path,
+                catalog.Select(m => (m.Id, m.DllHint)));
+            ModuleDefinition? matched = catalogId is null ? null
+                : catalog.First(m => string.Equals(m.Id, catalogId, StringComparison.OrdinalIgnoreCase));
 
             entries.Add(new ModuleEntry
             {
@@ -413,6 +416,7 @@ public static class ModuleRegistry
                 Homepage = matched?.Homepage,
                 IsBuiltin = false,
                 Definition = null,
+                CatalogId = catalogId,
                 DllPath = exists ? path : null,
                 GloballyEnabled = AppConfig.IsManualModuleDllEnabled(path),
             });

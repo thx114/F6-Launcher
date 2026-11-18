@@ -3,7 +3,7 @@ using System.Text.Json;
 namespace HoYoShadeHub.Extensions.ReShade;
 
 /// <summary>
-/// 覆盖包的 <c>ini_config.json</c>：每次启动游戏时写进这个游戏 ReShade.ini 的节 / 键。
+/// 覆盖包的 <c>ini_config.json</c>：每个安装批次首次写进这个游戏 ReShade.ini 的节 / 键。
 ///
 /// <para>
 /// 格式：
@@ -13,8 +13,8 @@ namespace HoYoShadeHub.Extensions.ReShade;
 ///   "remove": { "SECTION": ["Key1", "Key2"] }
 /// }
 /// </code>
-/// <c>set</c> 的键每次启动都重新写入（ReShade 退出时会把自己的内存配置写回 ini，
-/// 不重复 enforce 的话包里的配置只生效一次）；<c>remove</c> 的键从 ini 里摘掉
+/// <c>set</c> 写入包的初始配置，之后保留用户保存；显式重新导入才开始下一批次。
+/// <c>remove</c> 的键从 ini 里摘掉
 /// （死键清理）。两个都可选、可为空；文件不存在 / 解析失败 = 没有配置。
 /// </para>
 /// </summary>
@@ -135,8 +135,7 @@ public sealed class GamePackIniConfig
         {
             foreach ((string key, string value) in keys)
             {
-                // 包里写成 36,,0,,0,,0 的热键值会让 ReShade 直接不绑这个键（Home 打不开菜单），
-                // 而且这是**每次启动都重新写**的一条路 —— 用户手改 ini 会被它一直盖回坏值。
+                // 规范包里旧式热键，避免首次应用写入 ReShade 无法识别的 36,,0,,0,,0。
                 string wanted = ReShadeHotkeys.TryNormalize(section, key, value, out string repaired)
                     ? repaired
                     : value;

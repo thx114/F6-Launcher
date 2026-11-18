@@ -708,8 +708,8 @@ public sealed class LocalPackageInstaller
             string incomingGamePack = Path.Combine(root, "GamePack");
             if (Directory.Exists(incomingGamePack))
                 foreach (string incoming in Directory.EnumerateFiles(incomingGamePack, "*", SearchOption.AllDirectories))
-                    if (Path.GetFileName(incoming).StartsWith(".hysx_once", StringComparison.OrdinalIgnoreCase))
-                        throw new InvalidDataException("GamePack cannot contain a local once ledger.");
+                    if (PackApplicationBatch.IsLocalState(incoming))
+                        throw new InvalidDataException("GamePack cannot contain local once/application state.");
             foreach (string destinationRoot in new[] { _shadeRoot, _optiscalerRoot, _modulesRoot })
                 if (Directory.Exists(destinationRoot)) PackageTree.ValidateTree(destinationRoot);
             if (manifest?.Game is { } pendingGame && _cacheRoot.Length > 0)
@@ -820,116 +820,55 @@ public sealed class LocalPackageInstaller
                 }
             }
 
-            if (total == 0 && stuck.Count == 0)
-            {
-                throw new FileNotFoundException(
-                    $"包里没找到 {ShadeOverlayFolder} / {OptiOverlayFolder} 目录，也没有 {OverlayManifest.FileName} 清单。");
-            }
-
             if (stuck.Count > 0)
+                throw new IOException("覆盖包文件未全部安装；保留旧应用批次，请关闭占用后重新导入：" + string.Join("、", stuck.Take(4)));
+
+            // GamePack 本身就是合法载荷，不要求另带框架或 Modules 占位文件。
+            // 当前游戏与 pending 共用经过校验的分阶段迁移；只有完整提交才刷新应用身份。
+            if (manifest is not null)
             {
-                details.Add("有文件被占用没换成（游戏或启动器正开着就会这样）：" + string.Join("、", stuck.Take(4)));
-            }
-
-            // 覆盖包的 GamePack\（auto.json / ini_config / 预设 / README）随包分发：
-            // 落进每个匹配游戏的覆盖包目录。不做这步的话，新机器导入后动作文件根本不在
-            // 包目录里 —— 没有确认框、13 个 once 步骤永远不会执行（启动选项/预设绑定全丢）。
-            if (manifest is { Game: { Length: > 0 } gameHint } && _cacheRoot.Length > 0)
-            {
-                string gamePackSource = Path.Combine(root, "GamePack");
-                string gamesRoot = Path.Combine(_cacheRoot, "games");
-                bool placed = false;
-                if (Directory.Exists(gamePackSource) && Directory.Exists(gamesRoot))
-                {
-                    foreach (string dir in Directory.EnumerateDirectories(gamesRoot))
-                    {
-                        string gameKey = Path.GetFileName(dir);
-                        if (gameKey.StartsWith(".", StringComparison.Ordinal))
-                            continue;
-                        if (!gameKey.StartsWith(gameHint, StringComparison.OrdinalIgnoreCase))
-                            continue;
-                        string packDir = GameAddonPack.PackDirectory(_cacheRoot, gameKey);
-                        Directory.CreateDirectory(packDir);
-                        int copied = PackageTree.Copy(gamePackSource, packDir, cancellationToken);
-                        if (copied > 0)
-                        {
-                            placed = true;
-                            gamePackReplaced = true;
-                            details.Add($"GamePack → {gameKey} 覆盖包目录：{copied} 个文件（打开该游戏插件页确认动作后即生效）");
-                        }
-                    }
-                }
-
-                // 游戏还没装/没扫到（games 下没有匹配目录）：暂存，游戏一出现就由
-
-                // GameAddonPackService.Sync 铺进它的包目录 —— 否则新机器导入即丢动作。
-
-                if (!placed && Directory.Exists(gamePackSource))
-
-                {
-
-                    string pendingRoot = PackageTree.ResolveRelative(gamesRoot, ".pending-gamepacks");
-                    string pending = PackageTree.ResolveRelative(pendingRoot, gameHint);
-                    string pendingStage = PackageTree.CreateStage(pending);
-                    try
-                    {
-                        PackageTree.Copy(gamePackSource, pendingStage, cancellationToken);
-                        cancellationToken.ThrowIfCancellationRequested();
-                        pending = PackageTree.ResolveRelative(pendingRoot, gameHint);
-                        PackageTree.Commit(pendingStage, pending);
-                        gamePackReplaced = true;
-                    }
-                    finally { HysxUtil.TryDeleteDirectory(pendingStage); }
-
-                    details.Add($"GamePack 已暂存（游戏 {gameHint}* 尚未注册）；游戏出现后会自动铺进其覆盖包目录");
-
-            }
-                }
-            if (manifest is { GamePacks.Count: > 0 } && _cacheRoot.Length > 0)
-            {
-                string gamesRoot = Path.Combine(_cacheRoot, "games");
-                foreach (OverlayManifestGamePack gamePack in manifest.GamePacks)
+                foreach (OverlayManifestGamePack gamePack in manifest.GetGamePacks())
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    string gamePackGameHint = gamePack.Game!;
-                    string gamePackSource = PackageTree.ResolveRelative(root, gamePack.Path!);
+                    string source = PackageTree.ResolveRelative(root, gamePack.Path!);
+                    if (!Directory.Exists(source)) continue; // 旧清单 game 也可仅作为框架兼容提示。
+                    if (_cacheRoot.Length == 0) throw new InvalidOperationException("无法定位游戏缓存目录，覆盖包动作未安装。");
+                    string hint = gamePack.Game!;
+                    string gamesRoot = PackageTree.ResolveRelative(_cacheRoot, "games");
+                    PackApplicationBatch.BeginImport(source);
                     bool placed = false;
                     if (Directory.Exists(gamesRoot))
                     {
-                        foreach (string dir in Directory.EnumerateDirectories(gamesRoot))
+                        foreach (string directory in Directory.EnumerateDirectories(gamesRoot))
                         {
-                            string gameKey = Path.GetFileName(dir);
-                            if (gameKey.StartsWith(".", StringComparison.Ordinal)
-                                || !gameKey.StartsWith(gamePackGameHint, StringComparison.OrdinalIgnoreCase))
-                                continue;
-                            string packDir = GameAddonPack.PackDirectory(_cacheRoot, gameKey);
-                            Directory.CreateDirectory(packDir);
-                            int copied = PackageTree.Copy(gamePackSource, packDir, cancellationToken);
-                            if (copied > 0)
-                            {
-                                placed = true;
-                                gamePackReplaced = true;
-                                details.Add($"GamePack → {gameKey} 覆盖包目录：{copied} 个文件（打开该游戏插件页确认动作后即生效）");
-                            }
+                            string key = Path.GetFileName(directory);
+                            if (key.StartsWith(".", StringComparison.Ordinal)
+                                || !key.StartsWith(hint, StringComparison.OrdinalIgnoreCase)) continue;
+                            string pack = GameAddonPack.PackDirectory(_cacheRoot, key);
+                            if (!PackPendingMigration.TryMigrate(source, pack, out string? error,
+                                removeSource: false, cancellationToken: cancellationToken))
+                                throw new IOException($"GamePack → {key} 安装未完成，旧批次保留：{error}");
+                            placed = gamePackReplaced = true;
+                            details.Add($"GamePack → {key} 覆盖包目录（完整安装批次；确认动作后生效）");
                         }
                     }
-
                     if (placed) continue;
                     string pendingRoot = PackageTree.ResolveRelative(gamesRoot, ".pending-gamepacks");
-                    string pending = PackageTree.ResolveRelative(pendingRoot, gamePackGameHint);
-                    string pendingStage = PackageTree.CreateStage(pending);
+                    string pending = PackageTree.ResolveRelative(pendingRoot, hint);
+                    string stage = PackageTree.CreateStage(pending);
                     try
                     {
-                        PackageTree.Copy(gamePackSource, pendingStage, cancellationToken);
+                        PackageTree.Copy(source, stage, cancellationToken);
                         cancellationToken.ThrowIfCancellationRequested();
-                        pending = PackageTree.ResolveRelative(pendingRoot, gamePackGameHint);
-                        PackageTree.Commit(pendingStage, pending);
+                        PackageTree.Commit(stage, pending);
                         gamePackReplaced = true;
                     }
-                    finally { HysxUtil.TryDeleteDirectory(pendingStage); }
-                    details.Add($"GamePack 已暂存（游戏 {gamePackGameHint}* 尚未注册）；游戏出现后会自动铺进其覆盖包目录");
+                    finally { HysxUtil.TryDeleteDirectory(stage); }
+                    details.Add($"GamePack 已暂存（游戏 {hint}* 尚未注册）；发现游戏后迁移同一批次");
                 }
             }
+            if (total == 0 && !gamePackReplaced)
+                throw new FileNotFoundException("包里没有可安装的框架、OptiScaler、模块或 GamePack 载荷。");
 
             // 归档：让 DLL 页 / 插件页认下「盘上这份是哪个版本」
             progress?.Report(new(82, "正在归档版本与登记安装结果…"));

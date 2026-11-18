@@ -590,8 +590,8 @@ internal static class PackOnceNavigationTests
             "Plugin refresh/buttons/consent share one captured action/hash snapshot");
         string prompt = File.ReadAllText(Path.Combine(dir, "PackActionPrompt.cs"));
         check(prompt.Contains("Interlocked.CompareExchange") && prompt.Contains("isPackAction: true") && prompt.Contains("host, gamePackRoot") && prompt.Contains("PackActionOncePolicy.RunBatchAsync"), "Explicit import preserved with dialog guard and per-game ledger root");
-        check(prompt.Contains("refreshReimportedPack") && prompt.Contains("PackOnceLedger.ResetForReimport")
-            && prompt.Contains("PackActionConsent.ResetForReimport"), "Repeated overlay import refreshes consent and once ledger before prompting");
+        check(prompt.Contains("refreshReimportedPack") && !prompt.Contains("PackOnceLedger.ResetForReimport")
+            && prompt.Contains("PackActionConsent.ResetForReimport"), "Import prompt refreshes consent; ledger reset belongs to installer transaction");
         check(prompt.Contains("PackAutoActionSnapshot.TryLoad(packRoot)") && prompt.Contains("group.Games.Add((id, entry, snapshot))")
             && prompt.Contains("PackSnapshot = snapshot") && prompt.Contains("RunAsync(snapshot.LoadActions()")
             && !prompt.Contains("PackAutoActionFile.Load(") && !prompt.Contains("PackActionConsent.ComputeHash("),

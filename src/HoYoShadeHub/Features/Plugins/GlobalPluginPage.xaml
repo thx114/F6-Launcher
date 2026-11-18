@@ -105,15 +105,6 @@
                                Style="{ThemeResource CaptionTextBlockStyle}"
                                Text="正在检测 HoYoShade…"
                                TextTrimming="CharacterEllipsis" />
-                    <!--  提权窗口收不到 OLE 拖放，走的是 shell 的 WM_DROPFILES：
-                          它只在松手那一刻来消息，没有拖动过程中的悬浮高亮，所以这句提示得常驻写出来  -->
-                    <TextBlock Grid.Row="1"
-                               Grid.Column="0"
-                               Grid.ColumnSpan="2"
-                               Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                               Style="{ThemeResource CaptionTextBlockStyle}"
-                               Text="支持把 .zip 包 / .addon64 / .addon32 / .dll 直接拖进窗口安装（松手即装，拖动过程中不会有高亮提示）"
-                               TextWrapping="Wrap" />
                 </Grid>
 
                 <StackPanel Grid.Column="1"
@@ -319,7 +310,7 @@
                                                          Visibility="{x:Bind BusyVisibility}"
                                                          Value="{x:Bind ProgressPercent}" />
 
-                                            <StackPanel x:Name="CardExpandedArea" Spacing="6" Visibility="{x:Bind ExpandedVisibility}">
+                                            <StackPanel x:Name="CardExpandedArea" Spacing="6" x:Load="{x:Bind IsExpanded, Mode=OneWay}">
                                                 <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                                            Style="{ThemeResource CaptionTextBlockStyle}"
                                                            Text="{x:Bind Description}"
@@ -553,7 +544,7 @@
                                                 </Grid>
                                             </Button>
 
-                                            <StackPanel x:Name="CardExpandedArea" Spacing="6" Visibility="{x:Bind ExpandedVisibility}">
+                                            <StackPanel x:Name="CardExpandedArea" Spacing="6" x:Load="{x:Bind IsExpanded, Mode=OneWay}">
                                                 <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                                            Style="{ThemeResource CaptionTextBlockStyle}"
                                                            Text="{x:Bind Description}"
@@ -608,7 +599,7 @@
             </Grid>
 
             <!--  ===================== OptiScaler =====================  -->
-            <Grid x:Name="Grid_OptiScaler" Visibility="Collapsed">
+            <Grid x:Name="Grid_OptiScaler" x:DeferLoadStrategy="Lazy" Visibility="Collapsed">
                 <ScrollViewer Padding="0,0,6,0">
                     <StackPanel Spacing="6">
 
@@ -704,7 +695,7 @@
                                             </Button>
 
                                             <!--  展开后：元信息 + 换版本 + 目录 / 删除 / nrdll  -->
-                                            <StackPanel x:Name="CardExpandedArea" Spacing="6" Visibility="{x:Bind ExpandedVisibility}">
+                                            <StackPanel x:Name="CardExpandedArea" Spacing="6" x:Load="{x:Bind IsExpanded, Mode=OneWay}">
                                                 <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                                            Style="{ThemeResource CaptionTextBlockStyle}"
                                                            Text="{x:Bind MetaText}"
@@ -860,7 +851,7 @@
                                             </Button>
 
                                             <!--  展开后才是完整的可下载卡片  -->
-                                            <StackPanel x:Name="CardExpandedArea" Spacing="6" Visibility="{x:Bind ExpandedVisibility}">
+                                            <StackPanel x:Name="CardExpandedArea" Spacing="6" x:Load="{x:Bind IsExpanded, Mode=OneWay}">
                                                 <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                                            Style="{ThemeResource CaptionTextBlockStyle}"
                                                            Text="{x:Bind Description}"
@@ -905,7 +896,7 @@
             </Grid>
 
             <!--  ===================== 模块 =====================  -->
-            <Grid x:Name="Grid_Modules" Visibility="Collapsed">
+            <Grid x:Name="Grid_Modules" x:DeferLoadStrategy="Lazy" Visibility="Collapsed">
                 <ScrollViewer Padding="0,0,6,0">
                     <StackPanel Spacing="6">
                         <!--  顶部按钮：添加 DLL / 打开模块目录 / 刷新  -->
@@ -1060,7 +1051,7 @@
                                                 </StackPanel>
                                             </Grid>
 
-                                            <StackPanel x:Name="CardExpandedArea" Spacing="6" Visibility="{x:Bind ExpandedVisibility}">
+                                            <StackPanel x:Name="CardExpandedArea" Spacing="6" x:Load="{x:Bind IsExpanded, Mode=OneWay}">
                                                 <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                                            Style="{ThemeResource CaptionTextBlockStyle}"
                                                            Text="{x:Bind Description}"
@@ -1210,7 +1201,7 @@
                                                 </Grid>
                                             </Button>
 
-                                            <StackPanel x:Name="CardExpandedArea" Spacing="6" Visibility="{x:Bind ExpandedVisibility}">
+                                            <StackPanel x:Name="CardExpandedArea" Spacing="6" x:Load="{x:Bind IsExpanded, Mode=OneWay}">
                                                 <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                                            Style="{ThemeResource CaptionTextBlockStyle}"
                                                            Text="{x:Bind Description}"

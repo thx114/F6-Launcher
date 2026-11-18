@@ -161,7 +161,7 @@ public static class DllComponentCatalog
     }
 
     /// <summary>拉清单；失败也返回（Error 里有原因），界面照样能用硬编码的那几条 dlssnr</summary>
-    public static async Task<DllCatalog> LoadAsync(CancellationToken cancellationToken = default)
+    public static async Task<DllCatalog> LoadAsync(CancellationToken cancellationToken = default, string? cachePath = null)
     {
         var components = new Dictionary<string, List<DllComponent>>(StringComparer.OrdinalIgnoreCase);
         var failures = new List<string>();
@@ -232,6 +232,41 @@ public static class DllComponentCatalog
                 : $"部分来源拉不到：{string.Join("；", failures)}";
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
+        if (loaded == 0 && !string.IsNullOrWhiteSpace(cachePath))
+            return LoadCached(cachePath) with { Error = error };
+        if (loaded > 0 && !string.IsNullOrWhiteSpace(cachePath))
+        {
+            string temporary = cachePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(cachePath)!);
+                File.WriteAllText(temporary, JsonSerializer.Serialize(components, _options));
+                File.Move(temporary, cachePath, overwrite: true);
+            }
+            finally { if (File.Exists(temporary)) File.Delete(temporary); }
+        }
+        return ApplyLocalPolicy(components, error);
+    }
+
+    /// <summary>Read the last successful manifest without any network dependency.</summary>
+    public static DllCatalog LoadCached(string cachePath)
+    {
+        Dictionary<string, List<DllComponent>>? components = null;
+        try
+        {
+            if (File.Exists(cachePath))
+                components = JsonSerializer.Deserialize<Dictionary<string, List<DllComponent>>>(File.ReadAllText(cachePath), _options);
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+        catch (JsonException) { }
+        return ApplyLocalPolicy(components is null ? new(StringComparer.OrdinalIgnoreCase)
+            : new(components, StringComparer.OrdinalIgnoreCase), null);
+    }
+
+    private static DllCatalog ApplyLocalPolicy(Dictionary<string, List<DllComponent>> components, string? error)
+    {
         // 屏蔽清单：conditions.json 的 blockedVersions（默认屏蔽 dlssnr 2.14.1.0 ——
         // 这个包本身缺 2 个文件，装上去 DLSS5 直接起不来（用户实测报 0xBAD0000B
         // FAIL_UnableToInitializeFeature）。版本列表里少一条比装上去崩一次强。

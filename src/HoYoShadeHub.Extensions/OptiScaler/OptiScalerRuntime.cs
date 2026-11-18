@@ -936,12 +936,43 @@ Fsr2TranslationMode=2
 
     /// <summary>
     /// 原神 Bridge 的渲染精度不是注册表值，而是 Bridge DLL 目录旁的
-    /// <c>Dx11FsrBridge.render-scale.cache</c>。启动器按游戏设置写入选定精度。
+    /// <c>Dx11FsrBridge.render-scale.cache</c>。仅在用户手动应用精度时写入。
     /// </summary>
     public static IReadOnlyList<float> FsrBridgeRenderScales { get; } =
         Array.AsReadOnly(new[] { 0.2f, 0.3f, 0.4f, 0.5f, 0.6f, 0.7f, 0.8f, 0.9f, 0.999f });
 
-    public static bool EnsureFsrBridgeRenderScale(string? directory, float scale = 0.6f)
+    /// <summary>读取 Bridge 当前缓存的精度；缺失或不可读时保持未选择，不补默认值。</summary>
+    public static int ReadFsrBridgeRenderScaleIndex(string? directory)
+    {
+        if (string.IsNullOrWhiteSpace(directory))
+        {
+            return -1;
+        }
+
+        try
+        {
+            string path = Path.Combine(directory, "Dx11FsrBridge.render-scale.cache");
+            string[] tokens = File.ReadAllText(path).Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+            int index = -1;
+            // Bridge reads whitespace-separated key/value pairs, ignoring keys other than index.
+            for (int i = 0; i < tokens.Length; i += 2)
+            {
+                if (i + 1 == tokens.Length)
+                    return -1;
+                if (tokens[i] == "index"
+                    && !int.TryParse(tokens[i + 1], System.Globalization.NumberStyles.Integer,
+                        System.Globalization.CultureInfo.InvariantCulture, out index))
+                    return -1;
+            }
+            return (uint)index < FsrBridgeRenderScales.Count ? index : -1;
+        }
+        catch
+        {
+            return -1;
+        }
+    }
+
+    public static bool SetFsrBridgeRenderScale(string? directory, float scale)
     {
         if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
         {

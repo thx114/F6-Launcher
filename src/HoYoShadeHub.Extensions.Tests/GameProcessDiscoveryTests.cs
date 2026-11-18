@@ -26,6 +26,21 @@ internal static class GameProcessDiscoveryTests
         Check(GameProcessDiscovery.FindRunning(null) is null, "empty target");
         Check(GameProcessDiscovery.FindRunning("f6-no-such-process-" + Guid.NewGuid().ToString("N")) is null, "absent target");
         Check(GameProcessDiscovery.IsRunning(current, session), "live process without a game window");
+        var live = new GameProcessInspection(GameProcessStatus.Running);
+        Check(GameProcessDiscovery.InspectDisplayCore(live, () => 42) == GameProcessDisplayState.Running,
+            "live process with a visible window displays running");
+        Check(GameProcessDiscovery.InspectDisplayCore(live, () => 0) == GameProcessDisplayState.NoWindow && live.BlocksLaunch,
+            "windowless process has distinct display and still blocks launch");
+        Check(GameProcessDiscovery.InspectDisplayCore(live, () => throw new Win32Exception(5)) == GameProcessDisplayState.Unknown,
+            "window query failure displays uncertainty");
+        Check(GameProcessDiscovery.InspectDisplayCore(live, () => throw new InvalidOperationException()) == GameProcessDisplayState.Unknown,
+            "process disappearing during window query is rechecked by lifetime polling");
+        Check(GameProcessDiscovery.InspectDisplayCore(new(GameProcessStatus.Unknown),
+                () => throw new Exception("must not query unknown window")) == GameProcessDisplayState.Unknown,
+            "unknown process state is never displayed as running");
+        Check(GameProcessDiscovery.InspectDisplayCore(new(GameProcessStatus.NotRunning),
+                () => throw new Exception("must not query exited window")) == GameProcessDisplayState.NotRunning,
+            "exited process needs no window query");
         Check(!GameProcessDiscovery.IsRunning(current, session + 1), "foreign session excluded");
         var unknown = GameProcessDiscovery.InspectCore(() => session, () => 1,
             () => throw new Win32Exception(5), session);
@@ -75,6 +90,8 @@ internal static class GameProcessDiscoveryTests
             Check(await helper.StandardOutput.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(15)) == "ready", "helper ready");
             _ = helper.Handle; // Retain the kernel object after exit, as the launcher does.
             Check(GameProcessDiscovery.IsRunning(helper, session), "helper alive");
+            Check(GameProcessDiscovery.InspectDisplay(helper, GameProcessDiscovery.Inspect(helper, session)) == GameProcessDisplayState.NoWindow,
+                "real console helper is shown as a process without a game window");
             bool liveBlocked = false, attemptedCreate = false;
             try { GameLaunchGuard.Start(helper.ProcessName, () => attemptedCreate = true); }
             catch (GameAlreadyRunningException ex) { liveBlocked = ex.Conflict.Inspection.Status == GameProcessStatus.Running; }

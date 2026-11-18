@@ -30,7 +30,6 @@ public sealed partial class AboutSetting : PageBase
     {
         this.InitializeComponent();
         DownloadServers = new ObservableCollection<DownloadServerItem>();
-        UpdateDownloadServers();
         
         // Register for language change messages
         WeakReferenceMessenger.Default.Register<LanguageChangedMessage>(this, (r, m) =>
@@ -45,6 +44,11 @@ public sealed partial class AboutSetting : PageBase
             UpdateDownloadServers();
         });
 
+    }
+
+    protected override void OnLoaded()
+    {
+        if (!HasPageOperation) UpdateDownloadServers();
     }
 
     private bool _versionsLoaded;
@@ -128,7 +132,7 @@ public sealed partial class AboutSetting : PageBase
 
         var tasks = serversToUpdate.Select(async server =>
         {
-            long latency = await CloudProxyManager.PingServerAsync(server.ServerIndex, httpClient);
+            long latency = await CloudProxyManager.PingServerCachedAsync(server.ServerIndex, httpClient);
             if (latency >= 0)
             {
                 server.LatencyText = $"{latency}ms";
@@ -309,6 +313,7 @@ public sealed partial class AboutSetting : PageBase
             return;
         }
 
+        using var operation = BeginPageOperation($"更新启动器 {version.Tag}");
         try
         {
             IsGithubRestartVisible = Visibility.Collapsed;

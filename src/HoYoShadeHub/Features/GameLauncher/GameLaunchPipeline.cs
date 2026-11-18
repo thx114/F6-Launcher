@@ -68,6 +68,7 @@ public static class GameLaunchPipeline
         CancellationToken ct = default)
     {
         using var reservation = GameLaunchReservation.Acquire(gameId.GameBiz.ToString(), ct);
+        using var backgroundWork = BackgroundModeCoordinator.BeginLaunchWork();
         return await LaunchReservedAsync(gameId, entry, blockForInjection, report, ct, reservation);
     }
 
@@ -323,6 +324,7 @@ public static class GameLaunchPipeline
             }
             else
             {
+                var backgroundWork = BackgroundModeCoordinator.BeginLaunchWork();
                 _ = Task.Run(async () =>
                 {
                     try
@@ -333,6 +335,7 @@ public static class GameLaunchPipeline
                     {
                         _logger.LogWarning(ex, "Background extra DLL injection");
                     }
+                    finally { backgroundWork.Dispose(); }
                 });
             }
         }
@@ -592,9 +595,6 @@ public static class GameLaunchPipeline
 
         // ①' 桥在场但这次不用 OptiScaler：撤走 autoload 清单（否则桥会把 OptiScaler 又拉回去）
         InjectSpec? bridgeSpec = specs.FirstOrDefault(s => ModuleRegistry.IsGenshinFsrBridgeDll(s.Path));
-        if (isGenshin && bridgeSpec is not null)
-            OptiScalerRuntime.EnsureFsrBridgeRenderScale(Path.GetDirectoryName(bridgeSpec.Path),
-                AppConfig.GetGenshinBridgeRenderScale(gameId));
         if (bridgeSpec is not null
             && !optiScalerWanted
             && OptiScalerRuntime.RemoveFsrBridgeAutoload(Path.GetDirectoryName(bridgeSpec.Path), out _))
@@ -1067,6 +1067,19 @@ public static class GameLaunchPipeline
                 return;
             }
 
+            if (BackgroundModeCoordinator.IsGuiProcess)
+            {
+                using var backgroundWork = BackgroundModeCoordinator.BeginLaunchWork();
+                var attached = await BackgroundModeCoordinator.SendAsync(new()
+                {
+                    Command = "attach-fps",
+                    Fps = new(game.Id, game.StartTime.ToUniversalTime().Ticks, AppConfig.GetFpsUnlockTarget(gameId),
+                        shellcode, pattern.Value.bytes, pattern.Value.mask, 60),
+                }, 70000);
+                session.ReportAttached(attached.Success, attached.Error ?? "轻量后台持有帧率解锁会话。");
+                if (attached.PatternNotFound) AppConfig.SetFpsUnlockDataVersion(gameId, null);
+                return;
+            }
             using var unlocker = new FpsUnlocker(shellcode, pattern.Value);
             bool ok = await unlocker.AttachAsync(game, AppConfig.GetFpsUnlockTarget(gameId), TimeSpan.FromSeconds(60));
             if (ok)

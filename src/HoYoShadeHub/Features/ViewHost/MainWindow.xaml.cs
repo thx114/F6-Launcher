@@ -297,6 +297,7 @@ public sealed partial class MainWindow : WindowEx
 
     private void OnGameStarted(object _, GameStartedMessage __)
     {
+        BackgroundModeCoordinator.RequestPark();
         if (_mainViewLoaded)
         {
             StartGameAction action = AppConfig.StartGameAction;
@@ -396,11 +397,15 @@ public sealed partial class MainWindow : WindowEx
 
     public override void Hide()
     {
+        App.Current.EnsureSystemTray();
         base.Hide();
+        BackgroundModeCoordinator.RequestPark(explicitHide: true);
         WeakReferenceMessenger.Default.Send(new MainWindowStateChangedMessage { Hide = true, CurrentTime = DateTimeOffset.Now });
         // Hiding is a UI operation. Let the runtime schedule collection instead of
         // forcing a blocking full collection while the window is changing state.
     }
+
+    public override void Minimize() => Hide();
 
 
 
@@ -426,6 +431,11 @@ public sealed partial class MainWindow : WindowEx
         }
         else if (uMsg == (uint)User32.WindowMessage.WM_SYSCOMMAND)
         {
+            if (((long)wParam & 0xFFF0) == 0xF020)
+            {
+                Hide();
+                return IntPtr.Zero;
+            }
             if (wParam == 0xF030)
             {
                 // SC_MAXIMIZE
@@ -543,6 +553,7 @@ public sealed partial class MainWindow : WindowEx
 
     private void AppWindow_Changed(AppWindow sender, AppWindowChangedEventArgs args)
     {
+        if (AppWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Minimized }) Hide();
         if (args.DidSizeChange || args.DidPresenterChange)
         {
             UpdateDragRectangles();

@@ -1,4 +1,4 @@
-using CommunityToolkit.Mvvm.ComponentModel;
+﻿using CommunityToolkit.Mvvm.ComponentModel;
 using HoYoShadeHub.Core.HoYoPlay;
 using HoYoShadeHub.Extensions.OptiScaler;
 using HoYoShadeHub.Extensions.Dlls;
@@ -96,7 +96,7 @@ public sealed partial class OptiScalerBuildItemViewModel : ObservableObject
 
     public string Detail => CurrentBuild is not { } build
         ? "这个来源没有可用构建"
-        : (string.IsNullOrWhiteSpace(build.DllPath) ? $"目录：{build.Directory}" : $"注入：{build.DllPath}");
+        : (string.IsNullOrWhiteSpace(build.DllPath) ? build.Directory : build.DllPath);
 
     public Visibility DllMissingVisibility =>
         string.IsNullOrWhiteSpace(CurrentBuild?.DllPath) ? Visibility.Visible : Visibility.Collapsed;
@@ -105,7 +105,7 @@ public sealed partial class OptiScalerBuildItemViewModel : ObservableObject
     public string? BuildDirectory
         => CurrentBuild?.DllPath is { Length: > 0 } source ? Path.GetDirectoryName(source) : null;
 
-    /// <summary>卡片上显示的「当前文件」说明（profiles\<游戏>.ini 是否存在 / 何时改的）</summary>
+    /// <summary>卡片上显示的配置修改时间或尚未生成状态。</summary>
     [ObservableProperty]
     private string currentProfileText = string.Empty;
 
@@ -450,7 +450,7 @@ public sealed partial class OptiScalerPage : PageBase
     }
 
     private sealed record PresetSnapshot(List<string> Options, string Current, string ProfileText);
-    private sealed record BuildSnapshot(OptiScalerBuild Build, OptiScalerSource? Source, PresetSnapshot Preset);
+    private sealed record SourceSnapshot(OptiScalerBuild[] Builds, OptiScalerBuild Selected, OptiScalerSource? Source, PresetSnapshot Preset);
 
     private async void Load()
     {
@@ -458,6 +458,8 @@ public sealed partial class OptiScalerPage : PageBase
         using var operation = _loadOperation.Begin(PageCancellationToken);
         GameId? gameId = _gameId;
         _loading = true;
+        var loadTiming = Stopwatch.StartNew();
+        double ioMs = 0;
         try
         {
             _items.Clear();
@@ -476,19 +478,8 @@ public sealed partial class OptiScalerPage : PageBase
                 string? selectedId = gameId is null ? null : AppConfig.GetSelectedOptiScalerId(gameId);
                 bool migrate = gameId is not null && string.IsNullOrWhiteSpace(selectedId)
                     && AppConfig.GetUseOptiScalerLaunchOption(gameId);
-                var rows = new List<BuildSnapshot>();
                 var catalog = OptiScalerCatalog.LoadFile(RemoteCatalogService.OptiScalerCachePath);
-                var presets = OptiScalerPresets.List()
-                    .Select(name => (Name: name, Sources: OptiScalerPresets.GetSources(name))).ToList();
-                foreach (var build in library?.List(includeDirectorySize: false, cancellationToken: operation.Token) ?? [])
-                {
-                    operation.Token.ThrowIfCancellationRequested();
-                    string? buildDirectory = build.DllPath is { } dll ? Path.GetDirectoryName(dll) : null;
-                    List<string> options = [OptiScalerPresets.CurrentLabel, .. presets.Where(p => p.Sources.Count == 0
-                        || p.Sources.Contains(build.SourceId, StringComparer.OrdinalIgnoreCase)).Select(p => p.Name)];
-                    rows.Add(new(build, OptiScalerCatalog.Find(catalog, build.SourceId),
-                        ReadPresetSnapshot(build.SourceId, buildDirectory, gameKey, options)));
-                }
+                var builds = library?.List(includeDirectorySize: false, cancellationToken: operation.Token) ?? [];
                 var legacy = migrate ? library?.GetSelected(includeDirectorySize: false, cancellationToken: operation.Token) : null;
                 operation.Token.ThrowIfCancellationRequested();
                 if (migrate && gameId is not null)
@@ -496,24 +487,36 @@ public sealed partial class OptiScalerPage : PageBase
                     OptiScalerMigration.Run(gameId, legacy);
                     selectedId = AppConfig.GetSelectedOptiScalerId(gameId);
                 }
+                var presets = OptiScalerPresets.List()
+                    .Select(name => (Name: name, Sources: OptiScalerPresets.GetSources(name))).ToList();
+                var rows = new List<SourceSnapshot>();
+                foreach (var group in builds.GroupBy(b => b.SourceId, StringComparer.OrdinalIgnoreCase))
+                {
+                    operation.Token.ThrowIfCancellationRequested();
+                    var build = group.FirstOrDefault(b => string.Equals(b.Id, selectedId, StringComparison.OrdinalIgnoreCase)) ?? group.First();
+                    string? buildDirectory = build.DllPath is { } dll ? Path.GetDirectoryName(dll) : null;
+                    List<string> options = [OptiScalerPresets.CurrentLabel, .. presets.Where(p => p.Sources.Count == 0
+                        || p.Sources.Contains(build.SourceId, StringComparer.OrdinalIgnoreCase)).Select(p => p.Name)];
+                    rows.Add(new(group.ToArray(), build, OptiScalerCatalog.Find(catalog, build.SourceId),
+                        ReadPresetSnapshot(build.SourceId, buildDirectory, gameKey, options)));
+                }
                 var nrVersions = NrRuntimeLibrary.SelectableVersions(new DllVersionStore(AppConfig.CacheRoot).ListVersions("dlssnr")
                     .Where(v => File.Exists(Path.Combine(v.Directory, NrRuntimeLibrary.FileName)))
                     .Select(v => v.Version), AppConfig.IsNrVersionEnabled).ToList();
                 string? nr = gameId is null ? null : AppConfig.GetGameNrVersion(gameId, "opti");
-                return (Rows: rows, SelectedId: selectedId, NrVersions: nrVersions, Nr: nr);
+                return (Rows: rows, BuildCount: builds.Count, SelectedId: selectedId, NrVersions: nrVersions, Nr: nr);
             }, operation.Token);
             if (!operation.IsCurrent || !ReferenceEquals(gameId, _gameId)) return;
 
+            ioMs = loadTiming.Elapsed.TotalMilliseconds;
             _nrVersions = snapshot.NrVersions;
             _selectedNrVersion = snapshot.Nr;
             if (library is not null)
             {
                 // Same source, one card; retain the game-selected version and library order.
-                foreach (var group in snapshot.Rows.GroupBy(row => row.Build.SourceId, StringComparer.OrdinalIgnoreCase))
+                foreach (var row in snapshot.Rows)
                 {
-                    BuildSnapshot row = group.FirstOrDefault(r =>
-                        string.Equals(r.Build.Id, snapshot.SelectedId, StringComparison.OrdinalIgnoreCase)) ?? group.First();
-                    OptiScalerBuild build = row.Build;
+                    OptiScalerBuild build = row.Selected;
                     OptiScalerSource? source = row.Source;
 
                     var item = new OptiScalerBuildItemViewModel
@@ -524,7 +527,7 @@ public sealed partial class OptiScalerPage : PageBase
                         TagsText = source?.Tags is { Length: > 0 } tags ? string.Join(" ", tags) : string.Empty,
                     };
 
-                    item.SetBuilds(group.Select(r => r.Build).ToArray(), snapshot.SelectedId);
+                    item.SetBuilds(row.Builds, snapshot.SelectedId);
                     item.BuildChanged = OnBuildChanged;
                     AttachPreset(item, row.Preset);
                     _items.Add(item);
@@ -535,15 +538,15 @@ public sealed partial class OptiScalerPage : PageBase
 
             TextBlock_Count.Text = _items.Count == 0
                 ? "一个构建都没有 —— 先到左下角「全局插件 → OptiScaler」里下一个。"
-                : $"共 {_items.Count} 种 Opt、{snapshot.Rows.Count} 个版本；卡片选 Opt，卡片内切换版本。";
+                : $"共 {_items.Count} 种 Opt、{snapshot.BuildCount} 个版本；卡片选 Opt，卡片内切换版本。";
 
             OptiScalerBuildItemViewModel? inUse = _items.FirstOrDefault(i => i.IsInUse);
             TextBlock_Status.Text = inUse is null
                 ? "这个游戏还没选构建 —— 点击卡片标题、空白处或单选圈选择。"
                 : $"这个游戏用：{inUse.Title} · {inUse.SelectedBuildOption}";
             MotionAnimations.PlayListEntrance(OptiScalerSourceList);
-            _logger.LogInformation("OptiScaler page loaded {Sources} sources / {Builds} builds for {Game}",
-                _items.Count, snapshot.Rows.Count, gameName);
+            _logger.LogInformation("OptiScaler page loaded {Sources} sources / {Builds} builds for {Game}: backgroundMs={BackgroundMs:F1}, applyMs={ApplyMs:F1}",
+                _items.Count, snapshot.BuildCount, gameName, ioMs, loadTiming.Elapsed.TotalMilliseconds - ioMs);
         }
         catch (OperationCanceledException) when (operation.Token.IsCancellationRequested) { }
         catch (Exception ex)
@@ -792,12 +795,12 @@ public sealed partial class OptiScalerPage : PageBase
         string profileText;
         try
         {
-            profileText = profile is null ? "当前文件：这个构建没有可用目录"
+            profileText = profile is null ? "这个构建没有可用目录"
                 : File.Exists(profile)
-                    ? $"当前文件：profiles\\{Path.GetFileName(profile)}  {File.GetLastWriteTime(profile):yyyy-MM-dd HH:mm}"
-                    : "当前文件：还没有 profiles 配置（首次启动游戏时生成）";
+                    ? $"{File.GetLastWriteTime(profile):yyyy-MM-dd HH:mm}"
+                    : "还没有 profiles 配置（首次启动游戏时生成）";
         }
-        catch { profileText = "当前文件：读不到"; }
+        catch { profileText = "读不到配置修改时间"; }
         return new(options, current, profileText);
     }
 

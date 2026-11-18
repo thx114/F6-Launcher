@@ -420,6 +420,7 @@ public sealed partial class XxmiPage : PageBase, IShellFileDropTarget
     {
         _dropWindow = XamlRoot.GetWindowHandle();
         ShellFileDrop.Register(_dropWindow, this);
+        LoadInstance();
     }
 
     protected override void OnUnloaded() => ShellFileDrop.Unregister(_dropWindow, this);
@@ -428,11 +429,10 @@ public sealed partial class XxmiPage : PageBase, IShellFileDropTarget
     {
         base.OnNavigatedTo(e);
         _gameId = e.Parameter as GameId;
-        _gameName = ResolveGameName();
+        _gameName = null;
         _selectingBackend = true;
         ComboBox_Backend.SelectedIndex = _gameId is not null && AppConfig.GetModBrowserUseRocket(_gameId) ? 1 : 0;
         _selectingBackend = false;
-        LoadInstance();
     }
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
@@ -466,11 +466,11 @@ public sealed partial class XxmiPage : PageBase, IShellFileDropTarget
     }
 
     /// <summary>当前游戏的名字（导航参数只有 GameId；自定义游戏要反查 games.json 才有名字）</summary>
-    private string? ResolveGameName()
+    private string? ResolveGameName(GameId game)
     {
         try
         {
-            return GameCatalog.GetOrCreate(GameCatalog.CreateService(), _gameId)?.DisplayName;
+            return GameCatalog.GetOrCreate(GameCatalog.CreateService(), game)?.DisplayName;
         }
         catch (Exception ex)
         {
@@ -479,7 +479,7 @@ public sealed partial class XxmiPage : PageBase, IShellFileDropTarget
         }
     }
 
-    private async void LoadInstance()
+    private async void LoadInstance(bool fullSearch = false)
     {
         bool rocket = UseRocketMods;
         GameId? game = _gameId is null ? null : new GameId { Id = _gameId.Id, GameBiz = _gameId.GameBiz };
@@ -507,7 +507,10 @@ public sealed partial class XxmiPage : PageBase, IShellFileDropTarget
         try
         {
             if (game is null) throw new InvalidOperationException("请先选择当前游戏。");
-            await LoadInstanceCore(revision, game, gameName, owner, rocket);
+            gameName ??= await Task.Run(() => ResolveGameName(game));
+            if (!_modSession.IsCurrent(revision)) return;
+            _gameName = gameName;
+            await LoadInstanceCore(revision, game, gameName, owner, rocket, fullSearch);
         }
         catch (Exception ex)
         {
@@ -525,14 +528,17 @@ public sealed partial class XxmiPage : PageBase, IShellFileDropTarget
         }
     }
 
-    private async Task LoadInstanceCore(long revision, GameId game, string? gameName, string owner, bool rocket)
+    private async Task LoadInstanceCore(long revision, GameId game, string? gameName, string owner, bool rocket, bool fullSearch)
     {
         if (rocket)
         {
-            string? config = RocketIntegration.FindConfigPath(AppConfig.RocketConfigPath);
-            string? configuredGame = RocketIntegration.GameNameFor(game.GameBiz.Value, gameName);
-            string? selectedExe = GameCatalog.GetOrCreate(GameCatalog.CreateService(), game)?.ExePath;
-            var route = await Task.Run(() => ModDirectoryPolicy.ResolveRocket(owner, config, configuredGame, selectedExe));
+            var route = await Task.Run(() =>
+            {
+                string? config = RocketIntegration.FindConfigPath(AppConfig.RocketConfigPath);
+                string? configuredGame = RocketIntegration.GameNameFor(game.GameBiz.Value, gameName);
+                string? selectedExe = GameCatalog.GetOrCreate(GameCatalog.CreateService(), game)?.ExePath;
+                return ModDirectoryPolicy.ResolveRocket(owner, config, configuredGame, selectedExe);
+            });
             if (!_modSession.IsCurrent(revision)) return;
             _modDirectory = _modSession.Bind(revision, route);
             _instance = route.InstanceDirectory;
@@ -548,9 +554,9 @@ public sealed partial class XxmiPage : PageBase, IShellFileDropTarget
         // 磁盘枚举（实例探测 / 根查找 / 实例列表）放后台线程，避免进页面卡死 UI
         (string? instance, string? importer, List<XxmiInstanceItem> items) = await Task.Run(() =>
         {
-            string? inst = XxmiLocator.FindInstance(game.GameBiz, gameName, out string? imp);
+            string? inst = XxmiLocator.FindInstance(game.GameBiz, gameName, out string? imp, fullSearch);
             List<XxmiInstanceItem> list = [];
-            string? root = XxmiLocator.FindRoot();
+            string? root = XxmiLocator.FindRoot(allowDriveScan: false);
             if (root is not null && expected is not null)
             {
                 foreach (string dir in XxmiLocator.ListInstances(root))
@@ -857,7 +863,7 @@ public sealed partial class XxmiPage : PageBase, IShellFileDropTarget
     /// 给卡片找预览图，拉到一张贴一张：
     /// <list type="number">
     /// <item>GameBanana 来的 mod（目录名 <c>gb_数字</c>）：拿 API 的名字 / 作者 / 缩略图，本地有缓存就直接用；</item>
-    /// <item>其余 mod（作者自己打包的、或用户改了目录名）：用 <b>mod 目录里自带的 <c>preview.png</c></b>；</item>
+    /// <item>其余 mod（作者自己打包的、或用户改了目录名）：用 <b>mod 目录里自带的 <c>preview.png</c></b>；Rocket 缺少封面时读取同游戏、同角色的本地头像；</item>
     /// <item>GameBanana 拉不到（离线 / 页面没了）时，也用自带的图兜底。</item>
     /// </list>
     /// 都没有就保持占位图，不算错误。
@@ -884,8 +890,8 @@ public sealed partial class XxmiPage : PageBase, IShellFileDropTarget
 
                 if (item.ModId is not { } modId)
                 {
-                    // 不是 GameBanana 来的：不联网，直接看 mod 自带的那张
-                    ApplyLocalPreview(item);
+                    // 不是 GameBanana 来的：读取本地模组封面或 Rocket 角色图
+                    await ApplyLocalPreviewAsync(item);
                     return;
                 }
 
@@ -912,7 +918,7 @@ public sealed partial class XxmiPage : PageBase, IShellFileDropTarget
                 }
 
                 // GameBanana 拿不到（离线 / mod 页面没了）：还有 mod 自带的那张兜底
-                ApplyLocalPreview(item);
+                await ApplyLocalPreviewAsync(item);
             }));
         }
         catch (Exception ex)
@@ -921,15 +927,18 @@ public sealed partial class XxmiPage : PageBase, IShellFileDropTarget
         }
     }
 
-    /// <summary>把 mod 目录里自带的预览图贴到卡片上（没有、或这条是散装 .ini 就什么都不做）</summary>
-    private static void ApplyLocalPreview(XxmiModItem item)
+    /// <summary>后台查找模组封面或 Rocket 角色图，返回后只更新仍属于当前后端的卡片。</summary>
+    private async Task ApplyLocalPreviewAsync(XxmiModItem item)
     {
         if (!item.IsDirectory)
         {
             return;
         }
 
-        if (XxmiModManager.LocalPreview(item.Path) is { } local)
+        string path = item.Path;
+        string? local = await Task.Run(() => XxmiModManager.LocalPreview(item.Lease.Context, path, item.Category));
+        if (local is not null && _modSession.IsCurrent(item.Lease) && _mods.Contains(item)
+            && string.Equals(path, item.Path, StringComparison.OrdinalIgnoreCase))
         {
             item.SetPreviewFromFile(local, PreviewDecodeWidth);
         }
@@ -963,8 +972,7 @@ public sealed partial class XxmiPage : PageBase, IShellFileDropTarget
 
         // 用户明确要求重新找：清掉「上次自动没找到」的冷却，别让它挡住这次
         XxmiLocator.ClearNotFoundCooldown();
-        LoadInstance();
-        TextBlock_Status.Text = _instance is null ? "自动查找没找到 XXMI（可以手动指定 MI 目录）。" : $"自动找到：{_instance}";
+        LoadInstance(fullSearch: true);
     }
 
     private async void Button_Browse_Click(object sender, RoutedEventArgs e)
@@ -1046,7 +1054,7 @@ public sealed partial class XxmiPage : PageBase, IShellFileDropTarget
         if (UseRocketMods) { TextBlock_Status.Text = "当前是 Rocket Mod 后端；本页不启动 Rocket 或改变启动链。"; return; }
         long revision = _selectionRevision;
         // 没装 XXMI 时这是全盘浅扫（8 秒上限）：别在 UI 线程上跑，否则点一下卡 8 秒
-        string? root = await Task.Run(XxmiLocator.FindRoot);
+        string? root = await Task.Run(() => XxmiLocator.FindRoot());
         if (!_modSession.IsCurrent(revision) || UseRocketMods) return;
 
         if (root is null)

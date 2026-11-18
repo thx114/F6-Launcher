@@ -2284,17 +2284,6 @@ public static class AppConfig
         SetValue(Math.Clamp(value, 60, 1000), BuildLaunchOptionKey(gameId, "fps_unlock_target"));
     }
 
-    public static int GetGenshinBridgeRenderScaleIndex(GameId gameId) =>
-        Math.Clamp(GetValue(4, BuildLaunchOptionKey(gameId, "genshin_bridge_render_scale_index")),
-            0, OptiScalerRuntime.FsrBridgeRenderScales.Count - 1);
-
-    public static float GetGenshinBridgeRenderScale(GameId gameId) =>
-        OptiScalerRuntime.FsrBridgeRenderScales[GetGenshinBridgeRenderScaleIndex(gameId)];
-
-    public static void SetGenshinBridgeRenderScaleIndex(GameId gameId, int value) =>
-        SetValue(Math.Clamp(value, 0, OptiScalerRuntime.FsrBridgeRenderScales.Count - 1),
-            BuildLaunchOptionKey(gameId, "genshin_bridge_render_scale_index"));
-
     /// <summary>帧率解锁数据已同步到的游戏版本（shellcode 按游戏版本适配），按游戏记</summary>
     public static string? GetFpsUnlockDataVersion(GameId gameId)
         => GetValue<string>(default, BuildLaunchOptionKey(gameId, "fps_unlock_data_version"));
@@ -2541,6 +2530,12 @@ public static class AppConfig
     #region Setting Method
 
 
+
+    public static bool GameLightweightMode
+    {
+        get => GetValue(true);
+        set => SetValue(value);
+    }
 
     private static Dictionary<string, string?> _settingCache;
 

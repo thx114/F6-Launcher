@@ -63,6 +63,7 @@ public sealed partial class GamePluginPage : PageBase
 
     private bool _isWorking;
     private bool _isLoaded;
+    private bool _refreshAfterWork;
 
     /// <summary>
     /// 页面还挂在可视树上吗。
@@ -91,11 +92,7 @@ public sealed partial class GamePluginPage : PageBase
     {
         base.OnNavigatedTo(e);
 
-        // 页面实例被复用时（NavigationCacheMode 打开的话）也要跟着走
-        if (_isLoaded)
-        {
-            _ = RefreshAsync();
-        }
+        // Data is requested after Loaded, outside the navigation stack.
     }
 
     protected override void OnLoaded()
@@ -112,8 +109,9 @@ public sealed partial class GamePluginPage : PageBase
         // 先标记、再退订：订阅必须跟页面生命周期成对，
         // 否则窗口每次激活都会摸到已经释放的页面（ObjectDisposedException 崩进程）
         _isPageAlive = false;
+        _isLoaded = false;
         WeakReferenceMessenger.Default.UnregisterAll(this);
-        Addons.Clear();
+        if (!HasPageOperation) Addons.Clear();
     }
 
     /// <summary>
@@ -245,28 +243,38 @@ public sealed partial class GamePluginPage : PageBase
     {
         if (_isWorking)
         {
+            _refreshAfterWork = true;
             return;
         }
 
         _isWorking = true;
         TextBlock_Status.Text = "正在检测游戏与插件目录…";
+        long generation = PageGeneration;
+        var selectedGame = CurrentGameId;
+        var cancellationToken = PageCancellationToken;
 
         try
         {
-            _host = PluginHostLocator.Resolve(out string reason);
-            _discovery = GameCatalog.CreateService();
-
-            // 跟着左上角选中的那个游戏走
-            _entry = CurrentGameId is { } selectedGame
-                ? GameCatalog.IsCustomBiz(selectedGame.GameBiz)
-                    ? GameCatalog.FindByCustomBiz(GameCatalog.DiscoverAll(_discovery), selectedGame.GameBiz)
-                    : GameCatalog.GetOrCreate(_discovery, selectedGame)
-                : null;
+            var loaded = await Task.Run(() =>
+            {
+                var host = PluginHostLocator.Resolve(out string reason);
+                var discovery = GameCatalog.CreateService();
+                var entry = selectedGame is not null
+                    ? GameCatalog.IsCustomBiz(selectedGame.GameBiz)
+                        ? GameCatalog.FindByCustomBiz(GameCatalog.DiscoverAll(discovery), selectedGame.GameBiz)
+                        : GameCatalog.GetOrCreate(discovery, selectedGame)
+                    : null;
+                return (Host: host, Discovery: discovery, Entry: entry, Reason: reason);
+            }, cancellationToken).WaitAsync(cancellationToken);
+            if (!IsPageGenerationCurrent(generation)) return;
+            _host = loaded.Host;
+            _discovery = loaded.Discovery;
+            _entry = loaded.Entry;
 
             if (_host is null)
             {
                 TextBlock_TargetPath.Text = "未找到 HoYoShade 目录";
-                ShowInfo("没有可管理的 HoYoShade 目录", reason, InfoBarSeverity.Warning);
+                ShowInfo("没有可管理的 HoYoShade 目录", loaded.Reason, InfoBarSeverity.Warning);
             }
             else
             {
@@ -282,8 +290,9 @@ public sealed partial class GamePluginPage : PageBase
             }
 
             // 导航只读：包 Sync/INI Ensure 仅在既有明确导入/准备/启动入口执行。
-            LoadGame(_entry);
+            await LoadGameAsync(_entry, generation);
         }
+        catch (OperationCanceledException) { }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Refresh game plugin page");
@@ -292,11 +301,16 @@ public sealed partial class GamePluginPage : PageBase
         finally
         {
             _isWorking = false;
+            if (_refreshAfterWork && _isPageAlive)
+            {
+                _refreshAfterWork = false;
+                DispatcherQueue.TryEnqueue(() => { if (_isPageAlive) _ = RefreshAsync(); });
+            }
         }
     }
 
     /// <summary>读这个游戏的插件列表 + 配置栏</summary>
-    private void LoadGame(GameEntry entry)
+    private async Task LoadGameAsync(GameEntry entry, long generation)
     {
         try
         {
@@ -318,11 +332,24 @@ public sealed partial class GamePluginPage : PageBase
         UpdateShadeInjectDelayUi();
 
         // 不提供 NameCachePath，避免服务 Reload/LearnNames 在导航时写缓存。
-        _plugins = GamePluginService.Create(entry, _host, new GamePluginServiceOptions
+        var host = _host;
+        var snapshot = await Task.Run(() =>
         {
-            CandidateNames = [.. GameCatalog.AddonCandidateNames()],
-            TagsOfAddon = GameCatalog.TagsOfAddonFile,
-        });
+            var plugins = GamePluginService.Create(entry, host, new GamePluginServiceOptions
+            {
+                CandidateNames = [.. GameCatalog.AddonCandidateNames()],
+                TagsOfAddon = GameCatalog.TagsOfAddonFile,
+            });
+            var states = plugins.GetAddons();
+            var store = new AddonVersionStore(AppConfig.CacheRoot);
+            var tags = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+            foreach (var state in states)
+                if (GameCatalog.ExtensionIdOfAddonFile(state.File.FileName) is { Length: > 0 } id && !tags.ContainsKey(id))
+                    tags[id] = store.InstalledTags(id);
+            return (Plugins: plugins, States: states, Tags: tags, Feed: Dlss5FeedConfig.Load(plugins.AddonDirectory));
+        }, PageCancellationToken).WaitAsync(PageCancellationToken);
+        if (!IsPageGenerationCurrent(generation)) return;
+        _plugins = snapshot.Plugins;
         LoadGlobalSettings();
 
         Addons.Clear();
@@ -352,18 +379,17 @@ public sealed partial class GamePluginPage : PageBase
         // 导航不执行 SyncDlss5FeedPreset；用户明确开关插件/启动准备仍走既有入口。
 
         // 需求1：同一个插件装了多个版本时，版本下拉就长在**这张插件卡片里**
-        var versionStore = new AddonVersionStore(AppConfig.CacheRoot);
-        var tagsByExtension = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        var tagsByExtension = snapshot.Tags;
 
         // 需求1：DLSS5 Feed 的 create_delay / warmup_rebuild 就在 addon 目录那份 cfg 里，
         // 所有卡片读同一份（只有 Feed 那张卡片会显示这两个输入框）
-        Dlss5FeedConfig? feedConfig = Dlss5FeedConfig.Load(_plugins.AddonDirectory);
+        Dlss5FeedConfig? feedConfig = snapshot.Feed;
 
         // 全局插件里被关掉的 addon（文件被改名成 .addon64x）不在这一页列出来（用户要求）：
         // 这一页的开关只写本游戏的 ReShade.ini，改不动全局禁用，列出来只会让人以为这里能开。
         int globallyDisabled = 0;
 
-        foreach (GameAddonState state in _plugins.GetAddons())
+        foreach (GameAddonState state in snapshot.States)
         {
             if (state.GloballyDisabled)
             {
@@ -381,7 +407,7 @@ public sealed partial class GamePluginPage : PageBase
                 ForceHookOffChanged = OnAddonForceHookOffChanged,
                 FeedConfigChanged = OnAddonFeedConfigChanged,
             };
-            ApplyAddonVersionChoice(item, versionStore, tagsByExtension);
+            ApplyAddonVersionChoice(item, tagsByExtension);
             item.ConfigureDedicatedConfig(
                 item.IsRenoDxDlss5Main ? _plugins.GetDlss5HookPoint() : _plugins.GetHookPoint(),
                 feedConfig?.CreateDelay ?? Dlss5FeedConfig.DefaultCreateDelay,
@@ -586,7 +612,6 @@ public sealed partial class GamePluginPage : PageBase
     /// </summary>
     private void ApplyAddonVersionChoice(
         AddonItemViewModel item,
-        AddonVersionStore store,
         Dictionary<string, List<string>> tagsByExtension)
     {
         try
@@ -605,8 +630,7 @@ public sealed partial class GamePluginPage : PageBase
 
             if (!tagsByExtension.TryGetValue(extensionId, out List<string>? tags))
             {
-                tags = store.InstalledTags(extensionId);
-                tagsByExtension[extensionId] = tags;
+                return;
             }
 
             item.ConfigureVersionChoice(
@@ -622,9 +646,9 @@ public sealed partial class GamePluginPage : PageBase
     }
 
     /// <summary>用户在这张卡片里换了版本：落盘 + 重拼这个游戏的插件包 + 重新读盘</summary>
-    private void OnAddonVersionChanged(AddonItemViewModel item, string? tag)
+    private async void OnAddonVersionChanged(AddonItemViewModel item, string? tag)
     {
-        if (CurrentGameId is not { } gameId || item.ExtensionId is not { } extensionId)
+        if (_isWorking || CurrentGameId is not { } gameId || item.ExtensionId is not { } extensionId)
         {
             return;
         }
@@ -638,11 +662,30 @@ public sealed partial class GamePluginPage : PageBase
             return;
         }
 
-        AppConfig.SetPluginVersion(gameId, extensionId, tag);
-
+        using var operation = BeginPageOperation($"切换「{item.Name}」版本");
+        var entry = _entry;
+        var host = _host;
+        long generation = PageGeneration;
+        _isWorking = true;
+        AddonList.IsEnabled = false;
         try
         {
-            string? pack = GameAddonPackService.Sync(gameId, _entry, _host);
+            string? pack = await NrRuntimeWorkQueue.RunAsync(() =>
+            {
+                string? previous = AppConfig.GetPluginVersion(gameId, extensionId);
+                try
+                {
+                    AppConfig.SetPluginVersion(gameId, extensionId, tag);
+                    return GameAddonPackService.Sync(gameId, entry, host);
+                }
+                catch
+                {
+                    AppConfig.SetPluginVersion(gameId, extensionId, previous);
+                    GameAddonPackService.Sync(gameId, entry, host);
+                    throw;
+                }
+            });
+            if (!IsPageGenerationCurrent(generation)) return;
             TextBlock_Status.Text = tag is null
                 ? $"「{item.Name}」改回默认版本；这个游戏专属的插件包已收掉。"
                 : pack is null
@@ -652,7 +695,17 @@ public sealed partial class GamePluginPage : PageBase
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Sync addon pack for {Game}", gameId.GameBiz);
-            TextBlock_Status.Text = "同步插件包失败：" + ex.Message;
+            if (IsPageGenerationCurrent(generation)) TextBlock_Status.Text = "同步插件包失败：" + ex.Message;
+        }
+        finally
+        {
+            _isWorking = false;
+            AddonList.IsEnabled = true;
+            if (_refreshAfterWork && _isPageAlive)
+            {
+                _refreshAfterWork = false;
+                _ = RefreshAsync();
+            }
         }
 
         // 这里**只更新「插件目录」那行说明，绝不重建列表**。
@@ -664,7 +717,7 @@ public sealed partial class GamePluginPage : PageBase
         //
         // 换版本只改游戏 ini 的 [ADDON] AddonPath 和专属包目录，插件清单本身没变，
         // 所以不需要整页重读 —— 把那一行说明按现读的 ini 更新一下就够了。
-        UpdatePathHint(ResolveCurrentAddonDirectory());
+        if (IsPageGenerationCurrent(generation)) UpdatePathHint(ResolveCurrentAddonDirectory());
     }
 
     /// <summary>
@@ -928,7 +981,7 @@ public sealed partial class GamePluginPage : PageBase
     /// </summary>
     private async void Button_FixDll_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is not FrameworkElement { DataContext: AddonItemViewModel card } || _plugins is null)
+        if (_isWorking || sender is not FrameworkElement { DataContext: AddonItemViewModel card } || _plugins is null)
         {
             return;
         }
@@ -942,84 +995,87 @@ public sealed partial class GamePluginPage : PageBase
             return;
         }
 
-        var catalog = await DllComponentCatalog.LoadAsync();
-        IReadOnlyList<DllComponent> versions = catalog.Of(familyId);
-        if (versions.Count == 0)
-        {
-            TextBlock_Status.Text = "拉不到组件清单（多半是网络不通），稍后再试一次。";
-            return;
-        }
-
-        DllComponent? recommended = DllSelectionPolicy.SelectDefault(family, versions,
-            HoYoShadeHub.Features.OptiScaler.OptiScalerPresetCatalog.GpuClass);
-        var combo = new ComboBox { MinWidth = 260, SelectedIndex = -1 };
-        foreach (DllComponent component in versions)
-        {
-            combo.Items.Add(component.Version
-                + (string.IsNullOrWhiteSpace(component.Note) ? string.Empty : $"（{component.Note}）")
-                + (component == recommended ? "  ← 推荐" : string.Empty));
-            if (component == recommended) combo.SelectedIndex = combo.Items.Count - 1;
-        }
-
-        var hint = new TextBlock
-        {
-            Text = family.Id == "streamline"
-                ? "选一个 Streamline 运行时版本装进插件目录。2.14.1.0 起的包里已经没有 sl.interposer.dll，所以默认给你选 2.14.0.0。"
-                : "RTX 20/30 默认使用 F5 加速特化版；RTX 40/50 默认使用 SF 通用版。可手动选择其他版本。",
-            TextWrapping = TextWrapping.Wrap,
-            MaxWidth = 320,
-        };
-        var panel = new StackPanel { Spacing = 12 };
-        panel.Children.Add(hint);
-        panel.Children.Add(combo);
-
-        var dialog = new ContentDialog
-        {
-            XamlRoot = XamlRoot,
-            Title = "修复 " + family.DisplayName,
-            Content = panel,
-            PrimaryButtonText = "下载并安装",
-            CloseButtonText = "取消",
-            DefaultButton = ContentDialogButton.Primary,
-        };
-
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary || combo.SelectedIndex < 0)
-        {
-            return;
-        }
-
-        DllComponent chosen = versions[combo.SelectedIndex];
-        TextBlock_Status.Text = $"正在下载 {family.DisplayName} {chosen.Version}…";
+        using var operation = BeginPageOperation("修复插件运行库");
+        var plugins = _plugins;
+        var game = CurrentGameId;
+        bool IsCurrent() => game == CurrentGameId && _isPageAlive;
+        _isWorking = true;
         try
         {
-            var progress = new Progress<DownloadProgress>(p =>
-                TextBlock_Status.Text = $"正在下载 {chosen.Version}… "
-                    + (p.Percent is { } percent ? $"{percent:F0}%（" : string.Empty)
-                    + $"{p.BytesReceived / 1024d / 1024d:F1} MB）");
-
-            DllInstallResult install = await DllInstaller.InstallAsync(_plugins.AddonDirectory, chosen, progress);
-            if (!install.Ok)
+            var catalog = await Task.Run(() => DllComponentCatalog.LoadAsync());
+            if (!IsCurrent()) return;
+            IReadOnlyList<DllComponent> versions = catalog.Of(familyId);
+            if (versions.Count == 0)
             {
-                TextBlock_Status.Text = "安装失败：" + install.Error;
+                TextBlock_Status.Text = "拉不到组件清单（多半是网络不通），稍后再试一次。";
                 return;
             }
 
-            AppConfig.SetInstalledDllVariant(family.Id, chosen.Version);
-            AppConfig.SetInstalledDllVariantSize(family.Id, DllInstaller.GetInstalledSize(DllInstaller.Scan(_plugins.AddonDirectory), family));
-            try
+            DllComponent? recommended = DllSelectionPolicy.SelectDefault(family, versions,
+                HoYoShadeHub.Features.OptiScaler.OptiScalerPresetCatalog.GpuClass);
+            var combo = new ComboBox { MinWidth = 260, SelectedIndex = -1 };
+            foreach (DllComponent component in versions)
             {
-                new DllVersionStore(AppConfig.CacheRoot).Archive(
-                    family.Id,
-                    chosen.Version,
-                    install.Installed.Select(name => Path.Combine(_plugins.AddonDirectory, name)));
-            }
-            catch
-            {
-                // 归档失败不影响已经完成的安装。
+                combo.Items.Add(component.Version
+                    + (string.IsNullOrWhiteSpace(component.Note) ? string.Empty : $"（{component.Note}）")
+                    + (component == recommended ? "  ← 推荐" : string.Empty));
+                if (component == recommended) combo.SelectedIndex = combo.Items.Count - 1;
             }
 
+            var hint = new TextBlock
+            {
+                Text = family.Id == "streamline"
+                    ? "选一个 Streamline 运行时版本装进插件目录。2.14.1.0 起的包里已经没有 sl.interposer.dll，所以默认给你选 2.14.0.0。"
+                    : "RTX 20/30 默认使用 F5 加速特化版；RTX 40/50 默认使用 SF 通用版。可手动选择其他版本。",
+                TextWrapping = TextWrapping.Wrap,
+                MaxWidth = 320,
+            };
+            var panel = new StackPanel { Spacing = 12 };
+            panel.Children.Add(hint);
+            panel.Children.Add(combo);
+
+            var dialog = new ContentDialog
+            {
+                XamlRoot = XamlRoot,
+                Title = "修复 " + family.DisplayName,
+                Content = panel,
+                PrimaryButtonText = "下载并安装",
+                CloseButtonText = "取消",
+                DefaultButton = ContentDialogButton.Primary,
+            };
+
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary || combo.SelectedIndex < 0 || !IsCurrent())
+                return;
+
+            DllComponent chosen = versions[combo.SelectedIndex];
+            TextBlock_Status.Text = $"正在下载 {family.DisplayName} {chosen.Version}…";
+            var progress = new Progress<DownloadProgress>(p =>
+            {
+                if (!IsCurrent()) return;
+                TextBlock_Status.Text = $"正在下载 {chosen.Version}… "
+                    + (p.Percent is { } percent ? $"{percent:F0}%（" : string.Empty)
+                    + $"{p.BytesReceived / 1024d / 1024d:F1} MB）";
+            });
+
+            DllInstallResult install = await Task.Run(() => DllInstaller.InstallAsync(plugins.AddonDirectory!, chosen, progress));
+            if (!install.Ok)
+            {
+                if (IsCurrent()) TextBlock_Status.Text = "安装失败：" + install.Error;
+                return;
+            }
+
+            await NrRuntimeWorkQueue.RunAsync(() =>
+            {
+                AppConfig.SetInstalledDllVariant(family.Id, chosen.Version);
+                AppConfig.SetInstalledDllVariantSize(family.Id, DllInstaller.GetInstalledSize(DllInstaller.Scan(plugins.AddonDirectory), family));
+                new DllVersionStore(AppConfig.CacheRoot).Archive(family.Id, chosen.Version,
+                    install.Installed.Select(name => Path.Combine(plugins.AddonDirectory!, name)));
+            });
+
             // 就地刷红横幅：拿盘上最新状态按文件名对回卡片
-            foreach (GameAddonState state in _plugins.GetAddons())
+            var states = await Task.Run(plugins.GetAddons);
+            if (!IsCurrent()) return;
+            foreach (GameAddonState state in states)
             {
                 Addons.FirstOrDefault(a => string.Equals(a.FileName, state.FileName, StringComparison.OrdinalIgnoreCase))
                     ?.RefreshDllStatus(state.DllStatus);
@@ -1030,8 +1086,13 @@ public sealed partial class GamePluginPage : PageBase
         }
         catch (Exception ex)
         {
-            TextBlock_Status.Text = "修复失败：" + ex.Message;
+            if (IsCurrent()) TextBlock_Status.Text = "修复失败：" + ex.Message;
             _logger.LogWarning(ex, "Fix DLL from card failed");
+        }
+        finally
+        {
+            _isWorking = false;
+            if (_isPageAlive && (_refreshAfterWork || !IsCurrent())) { _refreshAfterWork = false; _ = RefreshAsync(); }
         }
     }
 

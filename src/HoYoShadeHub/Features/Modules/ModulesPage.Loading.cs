@@ -96,7 +96,7 @@ public sealed partial class ModulesPage
         {
             _logger.LogError(ex, "Load modules page in background");
             if (_navigated && revision == _moduleLoadRevision)
-                TextBlock_Status.Text = "模块读取失败，可点击刷新重试：" + ex.Message;
+                TextBlock_Status.Text = "模块读取失败，重新进入此页可重试：" + ex.Message;
         }
         finally
         {

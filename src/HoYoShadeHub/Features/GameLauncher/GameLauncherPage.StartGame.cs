@@ -62,10 +62,11 @@ public sealed partial class GameLauncherPage : PageBase
     public partial bool IsClosingGame { get; set; }
 
     [ObservableProperty]
-    public partial bool IsGameProcessUnverified { get; set; }
+    public partial GameProcessDisplayState GameProcessDisplay { get; set; }
     partial void OnGameProcessChanged(Process? oldValue, Process? newValue)
     {
         processTimer?.Stop();
+        if (newValue is not null) BackgroundModeCoordinator.RegisterGame(newValue, CurrentGameId);
         if (!_isLauncherPageLoaded) return;
         if (processTimer is null)
         {
@@ -79,18 +80,27 @@ public sealed partial class GameLauncherPage : PageBase
             processTimer?.Start();
             using var current = Process.GetCurrentProcess();
             var inspection = GameProcessDiscovery.Inspect(newValue, current.SessionId);
-            IsGameProcessUnverified = inspection.Status == GameProcessStatus.Unknown;
-            RunningGameInfo = $"{newValue.ProcessName}.exe ({newValue.Id})"
-                + (IsGameProcessUnverified ? "，状态无法确认：" + inspection.Detail : "");
+            UpdateGameProcessDisplay(newValue, inspection);
             if (inspection.Status == GameProcessStatus.Running)
                 RunningGameService.AddRuninngGame(CurrentGameBiz, newValue);
         }
         else
         {
-            IsGameProcessUnverified = false;
+            GameProcessDisplay = GameProcessDisplayState.NotRunning;
             RunningGameInfo = null;
             _logger.LogInformation("Game process exited");
         }
+    }
+
+    private void UpdateGameProcessDisplay(Process process, GameProcessInspection inspection)
+    {
+        GameProcessDisplay = GameProcessDiscovery.InspectDisplay(process, inspection);
+        RunningGameInfo = $"{process.ProcessName}.exe ({process.Id})" + (GameProcessDisplay switch
+        {
+            GameProcessDisplayState.NoWindow => "，进程仍在运行，未检测到游戏窗口",
+            GameProcessDisplayState.Unknown => "，状态无法确认" + (inspection.Detail is { } detail ? "：" + detail : ""),
+            _ => "",
+        });
     }
 
     
@@ -443,14 +453,14 @@ public sealed partial class GameLauncherPage : PageBase
                     WeakReferenceMessenger.Default.Send(new GameExitedMessage());
                     CheckGameVersion();
                 }
-                else if (IsGameProcessUnverified && inspection.Status == GameProcessStatus.Running)
+                else if (GameProcessDisplay == GameProcessDisplayState.Unknown && inspection.Status == GameProcessStatus.Running)
                 {
+                    UpdateGameProcessDisplay(GameProcess, inspection);
                     _ = CheckGameRunningAsync();
                 }
-                else if (!IsGameProcessUnverified && inspection.Status == GameProcessStatus.Unknown)
+                else
                 {
-                    IsGameProcessUnverified = true;
-                    RunningGameInfo = $"{GameProcess.ProcessName}.exe ({GameProcess.Id})，状态无法确认：{inspection.Detail}";
+                    UpdateGameProcessDisplay(GameProcess, inspection);
                 }
             }
         }
@@ -756,15 +766,6 @@ public sealed partial class GameLauncherPage : PageBase
         bool optiScalerWanted = includeGameExtras && UseOptiScaler
                                 && CurrentGameId is { } wantedOptiGame
                                 && !string.IsNullOrWhiteSpace(AppConfig.GetSelectedOptiScalerDll(wantedOptiGame));
-        if (bridgeSpecForCleanup is not null && CurrentGameId is { } bridgeScaleGame
-            && OptiScalerRuntime.EnsureFsrBridgeRenderScale(Path.GetDirectoryName(bridgeSpecForCleanup.Path),
-                AppConfig.GetGenshinBridgeRenderScale(bridgeScaleGame)))
-        {
-            _logger.LogInformation("原神 FSR Bridge 渲染精度已应用为 {Scale}：{Directory}",
-                AppConfig.GetGenshinBridgeRenderScale(bridgeScaleGame),
-                Path.GetDirectoryName(bridgeSpecForCleanup.Path));
-        }
-
         if (bridgeSpecForCleanup is not null && !preserveFsrBridgeChain
             && OptiScalerRuntime.RemoveFsrBridgeChain(
                 Path.GetDirectoryName(bridgeSpecForCleanup.Path), out string? duplicateChainBackup))
@@ -1005,6 +1006,7 @@ public sealed partial class GameLauncherPage : PageBase
         }
 
         IsWaitProcessMode = true;
+        var backgroundWork = BackgroundModeCoordinator.BeginLaunchWork();
         _ = Task.Run(async () =>
         {
             try
@@ -1033,6 +1035,7 @@ public sealed partial class GameLauncherPage : PageBase
                     System.Threading.Interlocked.CompareExchange(ref _extraInjectCts, null, operation);
                     operation.Dispose();
                 }
+                backgroundWork.Dispose();
             }
         });
     }
@@ -1561,12 +1564,14 @@ public sealed partial class GameLauncherPage : PageBase
     /// </summary>
     private async Task StartFpsUnlockAsync(TimeSpan processTimeout, TimeSpan moduleTimeout)
     {
+        using var backgroundWork = BackgroundModeCoordinator.BeginLaunchWork();
         if (CurrentGameId is not { } gameId || !UseFpsUnlock)
         {
             return;
         }
 
         StopFpsUnlocker();
+        await _backgroundFpsStop;
 
         byte[]? shellcode;
         (byte[] bytes, bool[] mask)? pattern;
@@ -1625,40 +1630,43 @@ public sealed partial class GameLauncherPage : PageBase
             return;
         }
 
-        FpsUnlocker unlocker = new(shellcode, pattern.Value);
-        bool ok;
+        F6Launcher.Background.BackgroundReply result;
         try
         {
-            ok = await unlocker.AttachAsync(game, FpsUnlockTarget, moduleTimeout);
+            result = await BackgroundModeCoordinator.SendAsync(new()
+            {
+                Command = "attach-fps",
+                Fps = new(game.Id, game.StartTime.ToUniversalTime().Ticks, FpsUnlockTarget,
+                    shellcode, pattern.Value.bytes, pattern.Value.mask, (int)moduleTimeout.TotalSeconds),
+            }, (int)moduleTimeout.TotalMilliseconds + 10000);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "FPS unlock attach failed");
-            ok = false;
+            _logger.LogError(ex, "FPS background attach failed");
+            result = new(false, ex.Message);
         }
-
+        bool ok = result.Success;
         if (ok)
         {
-            _fpsUnlocker = unlocker;
+            _backgroundFpsPid = game.Id;
             _logger.LogInformation("FPS unlock armed: {Target} fps (pid {Pid})", FpsUnlockTarget, game.Id);
             DispatcherQueue?.TryEnqueue(() => InAppToast.MainWindow?.Success("帧率解锁",
                 $"已把帧率上限同步为 {FpsUnlockTarget} fps（pid {game.Id}）。", 8000));
             return;
         }
 
-        if (unlocker.SkippedGameExited)
+        if (result.SkippedGameExited)
         {
             // 游戏在等主模块 / 附加期间被关了 —— 正常流程，不算失败，不弹错误
             _logger.LogInformation("FPS unlock skipped: game exited before attach (pid {Pid})", game.Id);
-            unlocker.Dispose();
             return;
         }
 
-        string detail = string.IsNullOrWhiteSpace(unlocker.LastError)
+        string detail = string.IsNullOrWhiteSpace(result.Error)
             ? "特征扫描或注入失败，游戏版本可能已更新。"
-            : unlocker.LastError!;
+            : result.Error!;
         _logger.LogWarning("FPS unlock failed: {Detail}", detail);
-        if (unlocker.PatternNotFound)
+        if (result.PatternNotFound)
         {
             // 特征对不上 = 本地数据大概率滞后于游戏版本；清掉同步戳，下次启动重新拉上游
             AppConfig.SetFpsUnlockDataVersion(gameId, null);
@@ -1666,7 +1674,6 @@ public sealed partial class GameLauncherPage : PageBase
         }
 
         DispatcherQueue?.TryEnqueue(() => InAppToast.MainWindow?.Error("帧率解锁", detail, 10000));
-        unlocker.Dispose();
     }
 
     /// <summary>
@@ -1716,10 +1723,24 @@ public sealed partial class GameLauncherPage : PageBase
         }
     }
 
+    private static int _backgroundFpsPid;
+    private static Task _backgroundFpsStop = Task.CompletedTask;
+
     private static void StopFpsUnlocker()
     {
         _fpsUnlocker?.Dispose();
         _fpsUnlocker = null;
+        int pid = System.Threading.Interlocked.Exchange(ref _backgroundFpsPid, 0);
+        if (pid > 0) _backgroundFpsStop = StopBackgroundFpsAsync(pid);
+    }
+
+    private static async Task StopBackgroundFpsAsync(int pid)
+    {
+        try { await BackgroundModeCoordinator.SendAsync(new()
+        {
+            Command = "stop-fps", Game = new(pid, 0, string.Empty, null, 0, [], [], [], null, []),
+        }); }
+        catch (Exception ex) { AppConfig.GetLogger<GameLauncherPage>().LogWarning(ex, "Stop background FPS session"); }
     }
 
     private void StopInjector(string reason)
@@ -1971,6 +1992,7 @@ public sealed partial class GameLauncherPage : PageBase
     /// <summary>Observe optional model injection without holding up the graphics launch pipeline.</summary>
     private async Task ObserveXxmiInjectionAsync(int pid, GameId gameId, string? displayName)
     {
+        using var backgroundWork = BackgroundModeCoordinator.BeginLaunchWork();
         try
         {
             string? graphicsDll = XxmiInjector.FindLoader(gameId, displayName);
@@ -2026,6 +2048,7 @@ public sealed partial class GameLauncherPage : PageBase
 
     private async Task StartGameAsync()
     {
+        using var backgroundWork = BackgroundModeCoordinator.BeginLaunchWork();
         using var cancellation = new System.Threading.CancellationTokenSource();
         GameLaunchReservation? reservation = null;
         try
@@ -2426,8 +2449,6 @@ public sealed partial class GameLauncherPage : PageBase
                     }
                     string bridgeDirectory = Path.GetDirectoryName(bridgePath)!;
                     OptiScalerRuntime.EnsureFsrBridgeIni(bridgeDirectory);
-                    OptiScalerRuntime.EnsureFsrBridgeRenderScale(bridgeDirectory,
-                        AppConfig.GetGenshinBridgeRenderScale(earlyGenshin));
                     // This early-start branch injects either Bridge-only (Rocket/XXMI chain) or the
                     // complete ordered EXE batch below. Never leave an autoload entry that could
                     // make the Bridge load a second OptiScaler.

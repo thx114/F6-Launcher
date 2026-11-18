@@ -46,6 +46,7 @@ internal static class OptiDownloadTests
             try { await downloader.InstallAsync(stale, "test-" + Guid.NewGuid().ToString("N"), null, new OptiScalerLibrary(Path.Combine(root, "library"))); }
             catch (InvalidOperationException) { refused = true; }
             Check(refused && !Directory.Exists(Path.Combine(root, "library")), "Stale rule cannot silently install an optional component");
+
             var amd = OptiScalerCatalog.LoadFile(Path.Combine(Directory.GetCurrentDirectory(), "catalog", "optiscaler.json"))!
                 .Single(s => s.Id == "amd-dlss5-nr-30x");
             const string sevenZipName = "AMD-DLSS5-NR-30X-OptiScaler16.7-22.7z";

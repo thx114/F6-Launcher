@@ -14,7 +14,7 @@ namespace HoYoShadeHub.PortableLauncher;
 /// <list type="number">
 /// <item>读同目录 <c>version.ini</c> 里的 <c>exe_path</c>，把参数原样传给它跑起来；</item>
 /// <item>没有 version.ini 就扫 <c>app-*</c> 子目录，挑最新的 <c>F6Launcher.exe</c>，兼容旧文件名；</item>
-/// <item>保留其它 <c>app-*</c> 目录供回退；启动不承担旧版本清理。</item>
+/// <item>旧目录由新界面成功加载后的后台任务回收，保留当前版、一个回退版和运行中的版本。</item>
 /// <item>什么都找不到 → 弹窗问要不要去下载。</item>
 /// </list>
 ///

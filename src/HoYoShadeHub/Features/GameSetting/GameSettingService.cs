@@ -246,26 +246,11 @@ internal static class GameSettingService
                 _ => 60,
             };
             string key = biz.GetGameRegistryKey();
-            JsonNode? node = null;
             byte[]? data = Registry.GetValue(key, GraphicsSettings_Model_h2986158309, null) as byte[];
-            if (data is not null)
-            {
-                string str = Encoding.UTF8.GetString(data).TrimEnd('\0');
-                node = JsonNode.Parse(str);
-                node?["FPS"] = fps;
-            }
-
-            string? value = node?.ToJsonString();
-            if (string.IsNullOrWhiteSpace(value))
-            {
-                value = $$"""
-                    {"FPS":{{fps}},"EnableVSync":false,"RenderScale":1.0,"ResolutionQuality":3,"ShadowQuality":3,"LightQuality":3,"CharacterQuality":3,"EnvDetailQuality":3,"ReflectionQuality":3,"SFXQuality":3,"BloomQuality":3,"AAMode":1,"EnableMetalFXSU":false,"EnableHalfResTransparent":false,"EnableSelfShadow":1,"DlssQuality":0}
-                    """;
-            }
-            value += "\0";
+            byte[] updated = StarRailGraphicsSettings.ApplyFps(data, fps);
             // 画质预设设置为0（自定义）时，帧率设置方能生效
             Registry.SetValue(key, GraphicsSettings_GraphicsQuality_h523255858, 0);
-            Registry.SetValue(key, GraphicsSettings_Model_h2986158309, Encoding.UTF8.GetBytes(value));
+            Registry.SetValue(key, GraphicsSettings_Model_h2986158309, updated, RegistryValueKind.Binary);
         }
     }
 

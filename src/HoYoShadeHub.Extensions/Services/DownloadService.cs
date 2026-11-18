@@ -1,7 +1,9 @@
 using HoYoShadeHub.Extensions.Networking;
+using HoYoShadeHub.Core.Networking;
 using System.Net;
 using System.Net.Http;
 using System.Text.Json;
+using System.Diagnostics;
 
 namespace HoYoShadeHub.Extensions.Services;
 
@@ -92,6 +94,8 @@ public sealed class DownloadService
         DownloadPauseToken? pauseToken = null,
         bool allowResume = true)
     {
+        using var transfer = BackgroundOperationActivity.BeginTransfer(Path.GetFileName(targetFile));
+        progress = new TrackedProgress(transfer, progress);
         string? directory = Path.GetDirectoryName(targetFile);
         if (!string.IsNullOrEmpty(directory))
         {
@@ -170,6 +174,16 @@ public sealed class DownloadService
         DeleteQuietly(metaPath);
 
         return new FileInfo(targetFile).Length;
+    }
+
+    private sealed class TrackedProgress(BackgroundOperationActivity.Transfer transfer,
+        IProgress<DownloadProgress>? inner) : IProgress<DownloadProgress>
+    {
+        public void Report(DownloadProgress value)
+        {
+            transfer.Report(value.BytesReceived, value.TotalBytes);
+            inner?.Report(value);
+        }
     }
 
     /// <summary>
@@ -299,6 +313,7 @@ public sealed class DownloadService
         DownloadPauseToken? pauseToken)
     {
         byte[] buffer = new byte[BufferSize];
+        long nextProgress = 0;
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         while (true)
         {
@@ -315,10 +330,16 @@ public sealed class DownloadService
             if (read == 0) break;
             await destination.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
             received += read;
-            progress?.Report(new DownloadProgress(received, total));
+            long now = Stopwatch.GetTimestamp();
+            if (now >= nextProgress)
+            {
+                progress?.Report(new DownloadProgress(received, total));
+                nextProgress = now + Stopwatch.Frequency / 10;
+            }
         }
 
         await destination.FlushAsync(cancellationToken);
+        progress?.Report(new DownloadProgress(received, total));
         return received;
     }
 

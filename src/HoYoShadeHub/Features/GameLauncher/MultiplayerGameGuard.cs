@@ -1,4 +1,4 @@
-using Microsoft.Extensions.Logging;
+﻿using Microsoft.Extensions.Logging;
 using Microsoft.UI.Xaml;
 using System;
 using System.Collections.Generic;
@@ -30,43 +30,7 @@ internal static class MultiplayerGameGuard
     private sealed class GuardLogToken { }
 
     /// <summary>多人游戏主进程与第三方反作弊服务（不含 .exe，不区分大小写）。改这里扩名单。</summary>
-    private static readonly HashSet<string> WatchedNames = new(StringComparer.OrdinalIgnoreCase)
-    {
-        // 三角洲行动（腾讯 ACE）
-        "DeltaForceClient-Win64-Shipping",
-        // 拳头 / Vanguard
-        "VALORANT-Win64-Shipping",
-        // Valve / CS2
-        "cs2",
-        // 绝地求生
-        "TslGame",
-        // Apex
-        "r5apex",
-        // 堡垒之夜 / EAC
-        "FortniteClient-Win64-Shipping",
-        // 使命召唤
-        "cod", "codmw",
-        // 战地
-        "bf2042", "bf1", "bfv", "bf4",
-        // 守望先锋
-        "Overwatch",
-        // The Finals / EAC
-        "Discovery",
-        // 暗区突围无限
-        "ArenaBreakoutInfinite",
-        // 战术小队
-        "SquadGame",
-        // 猎杀对决 / EAC
-        "HuntGame",
-        // 腐蚀 / EAC
-        "RustClient",
-        // 逃离塔科夫
-        "EscapeFromTarkov", "TarkovArena",
-        // 命运 2（对注入极敏感）
-        "destiny2",
-        // 注意：只收攻击性多人游戏本体进程。反作弊服务名（SGuardSvc64 / BEService / EAC 等）
-        // 不收 —— 一些二游同样带 ACE 但扫描宽松，按服务名匹配会把它们误伤、把启动器自己退掉。
-    };
+    private static readonly HashSet<string> WatchedNames = F6Launcher.Background.MultiplayerProcessNames.All;
 
     private static readonly SemaphoreSlim _startLock = new(1, 1);
     private static volatile bool _started;
