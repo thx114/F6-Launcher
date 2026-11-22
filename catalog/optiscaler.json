@@ -1,19 +1,6 @@
 {
   "sources": [
     {
-      "id": "wilsjo2",
-      "name": "OptiScaler DLSSNR PreSR Multipass (wilsjo2)",
-      "repository": "wilsjo2/OptiScaler-DLSSNR-PreSR-Multipass",
-      "description": "DLSS 神经渲染 + pre-SR 摆放，支持 1~3 遍处理。带 -rtx40-mfg 的是 40 系多帧生成特化包。",
-      "tagPattern": "^v?\\d",
-      "tags": [
-        "dlssnr",
-        "presr",
-        "multipass"
-      ],
-      "homepage": "https://github.com/wilsjo2/OptiScaler-DLSSNR-PreSR-Multipass/releases"
-    },
-    {
       "id": "neurotic",
       "name": "NeuRotic (MagicalPrincessUnicorn)",
       "repository": "MagicalPrincessUnicorn/NeuRotic-an-OptiScaler-DLSSNR-fork",
@@ -97,5 +84,5 @@
       "homepage": "https://github.com/artur-graniszewski/DLSS-Enabler/releases"
     }
   ],
-  "updatedAt": "2026-11-15T04:33:05.833712+00:00"
+  "updatedAt": "2026-11-22T10:40:59+00:00"
 }

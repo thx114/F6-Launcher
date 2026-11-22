@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updatedAt": "2026-11-15T04:33:05.833712+00:00",
+  "updatedAt": "2026-11-22T10:40:59+00:00",
   "_readme": [
     "远端插件目录：不重新发版也能加/改插件条目（按 id 覆盖内置的同 id 条目，新 id 直接追加）。",
     "字段语义见仓库 docs/OPEN-SOURCE-PLAN.md；改完务必跑一遍扩展自测的 --online（会逐条解析 tag/资产、并检查规则能不能命中资产名）。",
@@ -13,10 +13,10 @@
     {
       "id": "renodx.dlss5",
       "name": "RenoDX DLSS5",
-      "version": "latest",
-      "author": "clshortfuse / RankFTW",
-      "description": "RenoDX 的 DLSS5 插件，由 RHI 的资产仓库分发（该仓库有多个插件族，靠 tag 前缀区分）。⚠️ DLSS5 通常还要配套的 nvngx_dlss.dll / DLSS5 运行时，光装这个 addon 不一定出画面。",
-      "homepage": "https://github.com/RankFTW/rhi-repo/releases",
+      "version": "14.0-dev2-Chs",
+      "author": "clshortfuse / RankFTW / Lecram",
+      "description": "RenoDX DLSS5 的 Lecram v14.0-dev2 中文版。插件需配套 DLSS/NR 运行时，可在「DLL 配置」页管理。",
+      "homepage": "https://github.com/thx114/HoYoShadeHub-DLSSNR-Runtimes/releases/tag/renodx-dlss5-lecram-v14.0-dev2-chs",
       "tags": [
         "dlss5",
         "neural",
@@ -31,21 +31,26 @@
       ],
       "source": {
         "type": "github-release",
-        "repository": "RankFTW/rhi-repo",
-        "tagPattern": "^renodx-dlss5-",
-        "assetPattern": "renodx-dlss5_*.zip"
+        "repository": "thx114/HoYoShadeHub-DLSSNR-Runtimes",
+        "tagPattern": "^renodx-dlss5-lecram-v14\\.0-dev2-chs$",
+        "assetName": "renodx-dlss5-Lecram-v14.0-dev2-Chs.addon64",
+        "includePrerelease": true
       },
       "addonPatterns": [
         "renodx-dlss5.addon64*",
-        "renodx-dlss5(*"
+        "renodx-dlss5(*",
+        "renodx-dlss5-Lecram-v*.addon64*"
       ],
       "rules": [
         {
-          "match": "**/*.addon64",
+          "match": "renodx-dlss5-Lecram-v14.0-dev2-Chs.addon64",
           "to": "reshade-shaders/Addons",
-          "flatten": true
+          "flatten": true,
+          "rename": "renodx-dlss5(14.0-dev2-Chs).addon64",
+          "optional": false
         }
-      ]
+      ],
+      "sha256": "93f4befea234333a6d8f5195fd83ddccafbbf75c297c35bff133da632bc2385c"
     },
     {
       "id": "renodx.dlss5.superanus",
@@ -508,37 +513,7 @@
     },
     {
       "id": "dlssnr.lecram",
-      "name": "NVIDIA DLSS NR 运行时 310.8.Lecram（nvngx_dlssnr.dll）",
-      "version": "latest",
-      "author": "RankFTW / Lecram（RHI 资产仓库）",
-      "description": "NVIDIA 的 DLSS 神经渲染运行时 nvngx_dlssnr.dll（Lecram 修改版 310.8.3，40 系实测 5~10%+、50 系更高）。DLSS5 / DLSS-NR 插件（RenoDX DLSS5、GITC Uplift、DLSS5 Feed、Neural Interposer…）必须有它才出画面 —— 压缩包解出来就一个 dll，装进 HoYoShade\\reshade-shaders\\Addons\\nvngx_dlssnr.dll，和「DLL 配置」页装的是同一个位置；GITC Uplift 从自己的 Addons\\GITC-Uplift\\ 或这个 Addons 目录都认。⚠️ 别放游戏 exe 旁边：50 系上游戏自己的 DLSS 会先加载那一份，NR 插件反而用不上。⚠️ 30/40 系不出画面就去「DLL 配置」页换 RTX40 / SF 那几个变体（同族只留一份，互相覆盖）。",
-      "homepage": "https://github.com/RankFTW/rhi-repo/releases/tag/dlssnr-310.8.Lecram",
-      "tags": [
-        "dlssnr",
-        "runtime",
-        "nvidia",
-        "rtx"
-      ],
-      "hosts": [
-        "HoYoShade"
-      ],
-      "source": {
-        "type": "github-release",
-        "repository": "RankFTW/rhi-repo",
-        "tagPattern": "^dlssnr-310\\.8\\.Lecram$",
-        "assetPattern": "nvngx_dlssnr_*.zip"
-      },
-      "sha256": "ddb64e5545ba3f217c32555d2eb8fdfe76b9510d2256f13e8a5ecb1a9650ca54",
-      "addonPatterns": [
-        "nvngx_dlssnr.dll"
-      ],
-      "rules": [
-        {
-          "match": "**/nvngx_dlssnr.dll",
-          "to": "reshade-shaders/Addons",
-          "flatten": true
-        }
-      ]
+      "removed": true
     }
   ]
 }
