@@ -1,4 +1,4 @@
-using HoYoShadeHub.Extensions.ReShade;
+﻿using HoYoShadeHub.Extensions.ReShade;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -148,6 +148,8 @@ public static class PackActionDescriber
                 ? (enabled is true ? "启用" : "关闭") + "模块注入"
                 : $"模块 {step.GetString("id")} = {(enabled is true ? "开" : "关")}",
             "import_opt_config" => $"导入 OptiScaler 配置 {name}",
+            "import_opt_config_with_asi" => $"导入 OptiScaler 配置 {name} 并绑定已安装的 ASI 目录",
+            "install_opt_filters" => $"为 {step.GetString("build")} 安装 F6 内置 HoYoShade 滤镜（核心、着色器、纹理及预设）",
             "update_opt_config" => $"回抓 OptiScaler 配置 {name}",
             "set_opt_dll" => $"OptiScaler 注入 dll 名 → {name}",
             "import_xxmi" => $"导入 XXMI 模型 {name}",

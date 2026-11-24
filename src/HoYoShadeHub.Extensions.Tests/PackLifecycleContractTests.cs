@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -50,6 +50,8 @@ internal static class PackLifecycleContractTests
         new("set_opt_nr", ["set_optiscaler_nr"], null, "Production hash/PE validation and selection adapter is not linked; a transport fixture is insufficient."),
         new("set_module", [], null, "Production module global/game selection adapter is not linked."),
         new("import_opt_config", [], nameof(OptiScalerPresets), ""),
+        new("import_opt_config_with_asi", [], nameof(OptiScalerPresets), ""),
+        new("install_opt_filters", [], null, "Covered by opti-filter-install-tests; launcher host/build lookup adapter is outside this fixture."),
         new("update_opt_config", [], nameof(OptiScalerPresets), ""),
         new("set_opt_config", ["apply_opt_config", "select_opt_config"], "Linked LauncherActionRunner.OptConfig + real profile files", "AppConfig database persistence is an environment port; real DB is not opened."),
         new("set_opt_dll", [], null, "AppConfig injection-name adapter is not linked."),
@@ -551,6 +553,35 @@ internal static class PackLifecycleContractTests
                             "if_missing replaced saved profile or selected another preset.");
                         return Task.CompletedTask;
                     });
+            foreach (string install in new[] { "Portable A", "便携安装 B" })
+                await Case("actual-opt-asi-binding-" + install, () =>
+                {
+                    const string game = "hk4e_cn";
+                    var fixture = new Fixture(Path.Combine(fixtures, install));
+                    string build = fixture.PrepareOptEnvironment(game);
+                    string source = Path.Combine(fixture.Pack(game), "Opti.ini");
+                    const string portable = "[Plugins]\nPath=auto\nLoadAsiPlugins=true\n[NR]\nQuality=4\n";
+                    Write(source, portable);
+                    var context = fixture.OptContext(game);
+                    var bind = Step("""{"action":"import_opt_config_with_asi","file":"Opti.ini","build":"local/fixture","asi_file":"plugins/MFGUnlocker.asi","name":"ASI"}""");
+                    Require(!PackActionOncePolicy.IsSuccessfulOutcome(LauncherActionRunner.ExecuteOptConfigFixture(bind, context))
+                        && OptiScalerPresets.Read("ASI") is null, "Missing installed ASI created a preset.");
+                    string plugins = Path.Combine(build, "plugins");
+                    Write(Path.Combine(plugins, "MFGUnlocker.asi"), "fixture ASI, never loaded");
+                    string imported = LauncherActionRunner.ExecuteOptConfigFixture(bind, context);
+                    Require(PackActionOncePolicy.IsSuccessfulOutcome(imported) && File.ReadAllText(source) == portable, imported);
+                    var apply = Step("""{"action":"set_opt_config","name":"ASI"}""");
+                    string applied = LauncherActionRunner.ExecuteOptConfigFixture(apply, context);
+                    Require(PackActionOncePolicy.IsSuccessfulOutcome(applied), applied);
+                    foreach (string path in new[] { OptiScalerPresets.PathOf("ASI"), OptiScalerProfiles.ProfilePath(build, game), Path.Combine(build, OptiScalerRuntime.ConfigFileName) })
+                    {
+                        var ini = IniDocument.Load(path);
+                        Require(ini.GetValue("Plugins", "Path") == plugins && ini.GetValue("Plugins", "LoadAsiPlugins") == "true",
+                            "Installed ASI was not resolved from the current build directory.");
+                        Require(ini.GetValue("NR", "Quality") == "4", "ASI binding changed the graphics settings.");
+                    }
+                    return Task.CompletedTask;
+                });
             await Case("actual-opt-invalid-and-locked-config-never-success", () =>
             {
                 var f = new Fixture(Path.Combine(fixtures, "opt-error-handlers"));
@@ -677,19 +708,24 @@ internal static class PackLifecycleContractTests
     {
         action = name, enabled = false, minVersion = "1.4.7", milliseconds = 0,
         file = name is "set_ini_keys" or "set_ini" or "write_ini" ? "ReShade.ini"
-            : name is "import_opt_config" ? "Opti.ini" : name is "import_shader" ? "Fixture.fx" : "Payload.ini",
+            : name is "import_opt_config" or "import_opt_config_with_asi" ? "Opti.ini" : name is "import_shader" ? "Fixture.fx" : "Payload.ini",
         name = name is "apply_preset" ? "Payload.ini" : name is "set_shader" ? "Fixture@Fixture.fx"
             : name is "delete_shader" ? "Fixture.fx" : "FixturePreset",
         directory = "Config", target = "game", folder = "game_files",
+        build = name == "import_opt_config_with_asi" ? "local/fixture" : null,
+        asi_file = name == "import_opt_config_with_asi" ? "plugins/MFGUnlocker.asi" : null,
         set = new { CONTRACT = new { Value = "Matrix" } },
     };
 
     private static async Task<string> ProbeRealServiceAsync(string canonical, PackActionStep step, Fixture f, string game)
     {
         string pack = f.Pack(game);
-        if (canonical is "import_opt_config" or "update_opt_config" or "set_opt_config")
+        if (canonical is "import_opt_config" or "import_opt_config_with_asi" or "update_opt_config" or "set_opt_config")
         {
             string build = f.PrepareOptEnvironment(game);
+            string plugins = Path.Combine(build, "plugins");
+            if (canonical == "import_opt_config_with_asi")
+                Write(Path.Combine(plugins, "MFGUnlocker.asi"), "fixture ASI, never loaded");
             if (canonical == "set_opt_config") Require(OptiScalerPresets.Save("FixturePreset", "[NR]\nQuality=3\n"), "Opti preset save failed.");
             string result = LauncherActionRunner.ExecuteOptConfigFixture(step, f.OptContext(game));
             Require(PackActionOncePolicy.IsSuccessfulOutcome(result), result);
@@ -697,6 +733,11 @@ internal static class PackLifecycleContractTests
             {
                 Require(IniDocument.Load(OptiScalerProfiles.ProfilePath(build, game)).GetValue("NR", "Quality")?.Trim() == "3", "Opti profile effect missing.");
                 Require(AppConfig.Values[OptiScalerPresets.FollowKey(game)] == "FixturePreset", "Handler did not request selected-preset persistence.");
+            }
+            else if (canonical == "import_opt_config_with_asi")
+            {
+                var ini = IniDocument.Load(OptiScalerPresets.PathOf("FixturePreset"));
+                Require(ini.GetValue("Plugins", "Path") == plugins && ini.GetValue("NR", "Quality") == "3", "Installed ASI binding or preset values missing.");
             }
             else Require(OptiScalerPresets.Read("FixturePreset")?.Contains(canonical == "import_opt_config" ? "Quality=3" : "Quality=2") == true, "Opti import/capture bytes missing.");
             return result;

@@ -75,8 +75,35 @@ internal static class PackConsentMigrationTests
                 Check(blocked && File.Exists(Path.Combine(pending, "NR", "nvngx_dlssnr.dll")),
                     "Shared import placement fails closed and retains nested NR source");
             }
-            Check(PackPendingMigration.PlaceMatching(cache, "hk4e_cn") == 1 && !Directory.Exists(pending),
-                "First-import shared placement completes before removing pending source");
+            string runtime = Path.Combine(gamePack, "OptiRuntime", "build");
+            Directory.CreateDirectory(runtime);
+            string baseline = Path.Combine(runtime, ".hub-authority-baseline");
+            File.WriteAllText(baseline, "original");
+            void ReplaceBaseline(string text)
+            {
+                string tmp = baseline + ".tmp";
+                File.WriteAllText(tmp, text);
+                File.Move(tmp, baseline, overwrite: true);
+            }
+            int snapshots = 0;
+            try
+            {
+                PackPendingMigration.SnapshotTestCheckpoint.Value = () => ReplaceBaseline($"update {++snapshots}");
+                Check(!PackPendingMigration.TryMigrate(pending, gamePack, out _)
+                    && snapshots == 3 && Directory.Exists(pending)
+                    && File.ReadAllText(baseline) == "update 3"
+                    && File.ReadAllText(Path.Combine(gamePack, "auto.json")) == "old actions",
+                    "Continuous runtime writes leave old actions and newest runtime state in place");
+                snapshots = 0;
+                PackPendingMigration.SnapshotTestCheckpoint.Value = () =>
+                {
+                    if (++snapshots == 1) ReplaceBaseline("latest runtime state");
+                };
+                Check(PackPendingMigration.PlaceMatching(cache, "hk4e_cn") == 1 && !Directory.Exists(pending)
+                    && snapshots == 2 && File.ReadAllText(baseline) == "latest runtime state",
+                    "One runtime write retries with a fresh snapshot and preserves the latest state");
+            }
+            finally { PackPendingMigration.SnapshotTestCheckpoint.Value = null; }
             Check(File.ReadAllBytes(Path.Combine(gamePack, "NR", "nvngx_dlssnr.dll")).SequenceEqual(nr)
                 && File.ReadAllText(Path.Combine(gamePack, "auto.json")) == "new actions",
                 "First-import placement retains NR subdirectory and action file together");

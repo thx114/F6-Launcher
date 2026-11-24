@@ -191,6 +191,8 @@ public static partial class LauncherActionRunner
             "set_opt_nr" or "set_optiscaler_nr" => await SetOptNrAsync(step, context),
             "set_module" => SetModule(step, context),
             "import_opt_config" => ImportOptConfig(step, context),
+            "import_opt_config_with_asi" => ImportOptConfigWithAsi(step, context),
+            "install_opt_filters" => await InstallOptFiltersAsync(step, context),
             "update_opt_config" => UpdateOptConfig(step, context),
             "set_opt_config" or "apply_opt_config" or "select_opt_config" => SetOptConfig(step, context),
             "set_opt_dll" => SetOptDll(step, context),

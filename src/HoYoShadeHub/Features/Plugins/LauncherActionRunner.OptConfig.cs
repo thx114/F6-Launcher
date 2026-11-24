@@ -31,6 +31,36 @@ public static partial class LauncherActionRunner
             : "✗ 配置导入失败（重名 / 读不了 / 写不进配置目录）";
     }
 
+    private static string ImportOptConfigWithAsi(PackActionStep step, LauncherActionContext context)
+    {
+        string? file = step.GetString("file");
+        string? buildId = step.GetString("build");
+        string? asiFile = step.GetString("asi_file");
+        if (string.IsNullOrWhiteSpace(file) || string.IsNullOrWhiteSpace(buildId)
+            || !string.Equals(Path.GetExtension(asiFile), ".asi", StringComparison.OrdinalIgnoreCase))
+            return "✗ import_opt_config_with_asi 需要 file、build 和 asi_file 参数";
+        if (string.IsNullOrWhiteSpace(context.PackRoot))
+            return "✗ 绑定 ASI 路径需要覆盖包目录";
+
+        var build = new OptiScalerLibrary(AppConfig.OptiScalerRootPath).List(includeDirectorySize: false)
+            .Find(candidate => string.Equals(candidate.Id, buildId, StringComparison.OrdinalIgnoreCase));
+        if (build is null)
+            return "✗ ASI 所属的 OptiScaler 构建未安装：" + buildId;
+
+        string source = PackageTree.ResolveRelative(context.PackRoot, file);
+        string plugin = PackageTree.ResolveRelative(build.Directory, asiFile!);
+        if (!File.Exists(source) || !File.Exists(plugin))
+            return "✗ 覆盖包配置或已安装的 ASI 不存在：" + (!File.Exists(source) ? file : asiFile);
+
+        var ini = IniDocument.Load(source);
+        ini.SetValue("Plugins", "Path", Path.GetDirectoryName(plugin)!);
+        ini.SetValue("Plugins", "LoadAsiPlugins", "true");
+        string name = step.GetString("name") ?? Path.GetFileNameWithoutExtension(file);
+        return OptiScalerPresets.Save(name, string.Join("\r\n", ini.Lines))
+            ? "已导入 OptiScaler 配置并绑定 ASI 目录：" + name
+            : "✗ ASI 配置导入失败：" + name;
+    }
+
     /// <summary>update_opt_config：把当前游戏生效的那份 OptiScaler 配置回抓成预设（CaptureFromBuild）</summary>
     private static string UpdateOptConfig(PackActionStep step, LauncherActionContext context)
     {

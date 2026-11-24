@@ -16,6 +16,9 @@ using System.Text.RegularExpressions;
 if (args.Length == 3 && args[0] == "launch-nr-probe")
     return HoYoShadeHub.Extensions.Tests.LaunchPreparationTests.Probe(args[1], args[2]);
 
+if (args.Length == 1 && args[0] == "opti-filter-install-tests")
+    return HoYoShadeHub.Extensions.Tests.OptiScalerFilterInstallTests.Run();
+
 if (args.Length == 1 && args[0] == "launch-preparation-tests")
     return HoYoShadeHub.Extensions.Tests.LaunchPreparationTests.Run();
 
@@ -555,9 +558,12 @@ var dlss5 = liveEntries.First(e => e.Id == "renodx.dlss5");
 var dlssSf = liveEntries.First(e => e.Id == "renodx.dlss.sf");
 var ueDof = liveEntries.First(e => e.Id == "renodx.ue.doffix");
 
-// 同一个仓库里多个插件族必须靠 tagPattern 区分开
-Check(dlss5.Source.Repository == dlssSf.Source.Repository, "rhi-repo 里的多个插件族来自同一仓库");
-Check(!System.Text.RegularExpressions.Regex.IsMatch("renodx-dlss-SF-26.0917.1436", dlss5.Source.TagPattern!), "renodx-dlss5- 的 tagPattern 不会误吞 renodx-dlss-SF-");
+Check(liveEntries.All(e => e.Id != "dlssnr.lecram"), "Lecram NR 运行时只在 DLL 配置中管理");
+string lecramAsset = "renodx-dlss5-Lecram-v14.0-dev2-Chs.addon64";
+Check(dlss5.Source.AssetName == lecramAsset && dlss5.Source.IncludePrerelease
+      && dlss5.Sha256?.Length == 64, "RenoDX DLSS5 的中文预览版下载及校验已配置");
+Check(dlss5.Rules.Any(r => GlobMatcher.IsMatch(r.Match, lecramAsset) && !r.Optional),
+    "中文预览版的 addon 资产命中必需的安装规则");
 Check(GlobMatcher.IsMatch(dlssSf.Source.AssetPattern!, "renodx-dlss_SF_26.0917.1436.zip"), "renodx-dlss-SF 资产名匹配");
 Check(GlobMatcher.IsMatch(ueDof.Source.AssetPattern!, "renodx-universal_ue-dof-fix.addon64"), "ue-dof-fix 资产名匹配（是裸 addon 不是 zip）");
 Check(!string.IsNullOrWhiteSpace(builtin.Extensions.First(e => e.Id == "dlss5.bridge").Source.AssetName),
@@ -1763,14 +1769,18 @@ List<AddonFileInfo> realishFiles = new[] {
     "renodx-neural-interposer-nvngx.dll (23.1.0 RC1).addon64",
     "dlss5-bridge.addon64x",
     "renodx-dlss5.addon64",
+    lecramAsset,
+    lecramAsset + "x",
 }.Select(AddonFileInfo.Parse).Where(f => f is not null).Select(f => f!).ToList();
 
 Dictionary<string, List<AddonFileInfo>> owned = ExtensionAddonMatcher.Match(builtin.Extensions, realishFiles);
 Check(owned.TryGetValue("renodx.dlss5.superanus", out var superAnusFiles) && superAnusFiles.Count == 1
       && superAnusFiles[0].FileName.StartsWith("renodx-dlss5-super-anus"),
     "super-anus 的文件被它自己认领（没被 renodx.dlss5 抢走）");
-Check(!owned.TryGetValue("renodx.dlss5", out var dlss5Files) || dlss5Files.All(f => !f.FileName.Contains("super-anus")),
-    "renodx.dlss5 不会把 super-anus 的文件算成自己的");
+Check(owned.TryGetValue("renodx.dlss5", out var dlss5Files) && dlss5Files.Count == 3
+      && dlss5Files.All(f => f.Slug == "renodx-dlss5")
+      && dlss5Files.Count(f => f.Version == "14.0-dev2-Chs") == 2,
+    "RenoDX DLSS5 认领旧文件和中文预览版（含禁用名），并保留同一个插件 slug");
 Check(owned.TryGetValue("renodx.dlss.sf", out var sfFiles) && sfFiles.Any(f => f.FileName.Contains("ShortFuse")),
     "ShortFuse 的文件归 renodx.dlss.sf");
 Check(owned.TryGetValue("dlss5.bridge", out var bridgeFiles) && bridgeFiles.Any(f => f.FileName.StartsWith("dlss5-bridge")),
@@ -2690,13 +2700,14 @@ Check(OptiScalerDownloader.IsInstaller(installerOnly[0]) && !OptiScalerDownloade
 Check(OptiScalerDownloader.PickAsset(installerOnly) == "dlssnr_on_amd_setup.exe", "只有 exe 时挑它");
 Check(OptiScalerDownloader.PickAsset(bothKinds) == "OptiScaler-NR-v0.8.6.zip", "有 zip 就不要顺手去跑人家的安装程序");
 
-// 目录来源（catalog/optiscaler.json）：wilsjo2 / neurotic / mfg-ada（本 fork）等
+// 目录来源（catalog/optiscaler.json）：neurotic / mfg-ada（本 fork）等
 List<OptiScalerSource> optiCatalog = repoCatalogDir is null
     ? []
     : OptiScalerCatalog.Normalize(OptiScalerCatalog.LoadFile(Path.Combine(repoCatalogDir, "optiscaler.json")));
 Check(optiCatalog.Count >= 4, $"目录里有 {optiCatalog.Count} 个 OptiScaler 来源");
 Check(optiCatalog.All(s => s.Id != "dlssnr-amd"), "DLSS NR on AMD 不再挂在 OptiScaler 来源里");
 Check(optiCatalog.All(s => s.Id != "multipass-mfg"), "404 的那个来源删掉了");
+Check(optiCatalog.All(s => s.Id != "wilsjo2"), "wilsjo2 已从 OptiScaler 云端目录移除");
 Check(optiCatalog.Select(s => s.Id).Distinct().Count() == optiCatalog.Count, "来源 id 不重复（要当目录名用）");
 Check(optiCatalog.All(s => s.Tags is { Length: > 0 }), "每个来源都带 tags（卡片上要显示）");
 Check(optiCatalog.All(s => s.Repository.Contains('/')), "每个来源都是 owner/repo");
@@ -2934,15 +2945,13 @@ string cacheOpti = Path.Combine(cacheRoot, "optiscaler");
 Directory.CreateDirectory(Path.Combine(legacyOpti, "src", "v1"));
 Check(CacheMigrationPlanner.PlanMoves(legacyOpti, null, cacheOpti, null).Count == 0, "OptiScaler 不规划搬迁");
 
-// 模块要迁移
+// Modules 与 OptiScaler 都保留在启动器目录旁边，不规划搬入 cache
 string legacyModules = Path.Combine(root, "legacy-modules");
 string cacheModules = Path.Combine(cacheRoot, "modules");
 Directory.CreateDirectory(Path.Combine(legacyModules, "veritas"));
-List<LegacyStoreMove> plannedMoves = CacheMigrationPlanner.PlanMoves(null, legacyModules, null, cacheModules);
-Check(plannedMoves.Count == 1 && plannedMoves[0].Source == legacyModules && plannedMoves[0].Target == cacheModules && !plannedMoves[0].TargetExists,
-    "规划出模块搬迁");
+Check(CacheMigrationPlanner.PlanMoves(null, legacyModules, null, cacheModules).Count == 0,
+    "模块目录不规划搬迁");
 Directory.CreateDirectory(cacheModules);
-Check(CacheMigrationPlanner.PlanMoves(null, legacyModules, null, cacheModules)[0].TargetExists, "目标已存在要标记，不能覆盖");
 Check(CacheMigrationPlanner.PlanMoves(null, Path.Combine(root, "nope"), null, cacheModules).Count == 0, "源不存在就不规划");
 
 Console.WriteLine("== 29. addon→扩展归属 + 插件包体检 + dll 版本归档 ==");
@@ -4068,7 +4077,7 @@ Check(!BridgeCompatibility.IsSupported(new Version(2,2,0,0)) && !BridgeCompatibi
 Console.WriteLine("== Current full portable layout does not trigger legacy upgrade guidance ==");
 string portableLayoutRoot = Path.Combine(root, "full-portable-layout");
 Directory.CreateDirectory(portableLayoutRoot);
-File.WriteAllText(Path.Combine(portableLayoutRoot, "HoYoShadeHub.exe"), "stub");
+File.WriteAllText(Path.Combine(portableLayoutRoot, "F6Launcher.exe"), "stub");
 File.WriteAllText(Path.Combine(portableLayoutRoot, ".portable"), "");
 Check(!CacheMigrationPlanner.HasSupportedPortableLayout(portableLayoutRoot), "Unmarked legacy layout still detected normally");
 string layoutMarker = Path.Combine(portableLayoutRoot, CacheMigrationPlanner.PortableLayoutFileName);
@@ -4076,8 +4085,8 @@ File.WriteAllText(layoutMarker, "{\"schema\":1,\"layout\":\"full-portable-v1\",\
 Check(CacheMigrationPlanner.HasSupportedPortableLayout(portableLayoutRoot), "Current supported full package layout recognized");
 Check(!CacheMigrationPlanner.NeedsMigration(false, true, false, true, false, true, false, true),
     "Fresh full package does not ask to upgrade root modules or bundled plugins");
-Check(CacheMigrationPlanner.NeedsMigration(false, false, false, false, false, true, false),
-    "Actual unmarked legacy Modules migration remains available");
+Check(CacheMigrationPlanner.PlanMoves(null, legacyModules, null, cacheModules).Count == 0,
+    "Unmarked legacy layout still keeps Modules in place");
 File.WriteAllText(layoutMarker, "{\"schema\":99}");
 Check(!CacheMigrationPlanner.HasSupportedPortableLayout(portableLayoutRoot), "Unknown layout schema cannot silence migration");
 File.WriteAllText(layoutMarker, "invalid json");

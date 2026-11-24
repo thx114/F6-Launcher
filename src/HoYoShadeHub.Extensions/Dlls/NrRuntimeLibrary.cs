@@ -198,6 +198,17 @@ public static class NrRuntimeLibrary
             {
                 if (!HysxFileLink.AreHardLinked(source, target)) HysxFileLink.LinkOrCopy(source, target);
             }
+            else if (relative.StartsWith("HoYoShade" + Path.DirectorySeparatorChar + "reshade-shaders" + Path.DirectorySeparatorChar,
+                StringComparison.OrdinalIgnoreCase))
+            {
+                // Refresh filter assets, preserving runtime ReShade.ini and presets.
+                if (!File.Exists(target) || Hash(source) != Hash(target))
+                {
+                    string staged = target + ".pending";
+                    try { File.Copy(source, staged, true); File.Move(staged, target, true); }
+                    finally { if (File.Exists(staged)) File.Delete(staged); }
+                }
+            }
             else if (!File.Exists(target)) File.Copy(source, target);
         }
         HysxFileLink.LinkNeuralRuntime(nr, Path.Combine(targetRoot, FileName));

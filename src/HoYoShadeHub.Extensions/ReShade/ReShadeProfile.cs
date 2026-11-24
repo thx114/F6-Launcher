@@ -777,6 +777,11 @@ public sealed partial class AddonFileInfo
         @"^(?<slug>.+?)\.(?<ver>\d[0-9A-Za-z.\-_]*)(?<ext>\.addon(?:64|32)x?)$",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
+    // The Lecram download uses a hyphenated version. Give it the same slug as the original addon.
+    private static readonly Regex _renoDxLecramPattern = new(
+        @"^(?<slug>renodx-dlss5)-Lecram-v(?<ver>[0-9][0-9A-Za-z.\-]*)\.addon64x?$",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
     public static AddonFileInfo? Parse(string fileName)
     {
         Match match = _pattern.Match(fileName);
@@ -789,8 +794,13 @@ public sealed partial class AddonFileInfo
         string extension = match.Groups["ext"].Value.ToLowerInvariant();
         string? rawVersion = match.Groups["ver"].Success ? match.Groups["ver"].Value.Trim() : null;
 
-        // 没有括号版本时再试「名字.版本.addon64」
-        if (rawVersion is null && _dottedPattern.Match(fileName) is { Success: true } dotted)
+        if (rawVersion is null && _renoDxLecramPattern.Match(fileName) is { Success: true } lecram)
+        {
+            slug = lecram.Groups["slug"].Value;
+            rawVersion = lecram.Groups["ver"].Value;
+        }
+        // 没有括号或 Lecram 版本时再试「名字.版本.addon64」
+        else if (rawVersion is null && _dottedPattern.Match(fileName) is { Success: true } dotted)
         {
             slug = dotted.Groups["slug"].Value.Trim();
             rawVersion = dotted.Groups["ver"].Value.Trim();

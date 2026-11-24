@@ -24,7 +24,8 @@ public static class CacheMigrationPlanner
         try
         {
             if (!File.Exists(Path.Combine(userDataRoot, ".portable"))
-                || !File.Exists(Path.Combine(userDataRoot, "HoYoShadeHub.exe"))) return false;
+                || !(File.Exists(Path.Combine(userDataRoot, "F6Launcher.exe"))
+                     || File.Exists(Path.Combine(userDataRoot, "HoYoShadeHub.exe")))) return false;
             using var document = System.Text.Json.JsonDocument.Parse(
                 File.ReadAllText(Path.Combine(userDataRoot, PortableLayoutFileName)));
             var marker = document.RootElement;
@@ -64,8 +65,7 @@ public static class CacheMigrationPlanner
             return false;
         }
 
-        return (hasInstalledExtensions && !pluginStoreHasVersions)
-               || (legacyModulesExists && !cacheModulesExists);
+        return hasInstalledExtensions && !pluginStoreHasVersions;
     }
 
     /// <summary>规划要搬迁的老存储（只列出**源目录真的存在**且和目标不是同一个的那些）。</summary>
@@ -75,30 +75,6 @@ public static class CacheMigrationPlanner
         string? cacheOptiScaler,
         string? cacheModules)
     {
-        // OptiScaler 不迁移（原地多版本共存），所以这里只规划模块
-        _ = legacyOptiScaler;
-        _ = cacheOptiScaler;
-
-        var moves = new List<LegacyStoreMove>();
-        Add(ModulesKind, legacyModules, cacheModules);
-        return moves;
-
-        void Add(string kind, string? source, string? target)
-        {
-            if (string.IsNullOrWhiteSpace(source) || string.IsNullOrWhiteSpace(target) || !Directory.Exists(source))
-            {
-                return;
-            }
-
-            if (string.Equals(
-                    Path.GetFullPath(source).TrimEnd('\\', '/'),
-                    Path.GetFullPath(target).TrimEnd('\\', '/'),
-                    StringComparison.OrdinalIgnoreCase))
-            {
-                return;
-            }
-
-            moves.Add(new LegacyStoreMove(kind, source!, target!) { TargetExists = Directory.Exists(target) });
-        }
+        return [];
     }
 }

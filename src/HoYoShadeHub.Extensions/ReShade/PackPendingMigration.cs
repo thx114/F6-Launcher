@@ -5,6 +5,10 @@ namespace HoYoShadeHub.Extensions.ReShade;
 
 public static class PackPendingMigration
 {
+    private const int MaxSnapshotAttempts = 3;
+    private sealed class DestinationChangedException(string message) : IOException(message);
+    internal static readonly AsyncLocal<Action?> SnapshotTestCheckpoint = new();
+
     /// <summary>导入确认与游戏同步共用入口；完整迁移后才允许读取 auto.json 授权。</summary>
     public static int PlaceMatching(string cacheRoot, string gameKey)
     {
@@ -29,6 +33,24 @@ public static class PackPendingMigration
     public static bool TryMigrate(string sourceRoot, string destinationRoot, out string? error,
         bool removeSource = true, CancellationToken cancellationToken = default)
     {
+        for (int attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return TryMigrateSnapshot(sourceRoot, destinationRoot, out error, removeSource, cancellationToken);
+            }
+            catch (DestinationChangedException ex)
+            {
+                if (attempt < MaxSnapshotAttempts) continue;
+                error = "运行缓存仍在变化，请等游戏退出和启动器完成收尾后重新导入。" + ex.Message;
+                return false;
+            }
+        }
+    }
+
+    private static bool TryMigrateSnapshot(string sourceRoot, string destinationRoot, out string? error,
+        bool removeSource, CancellationToken cancellationToken)
+    {
         string? stage = null;
         try
         {
@@ -47,6 +69,7 @@ public static class PackPendingMigration
             bool existed = Directory.Exists(destination);
             Dictionary<string, string> original = existed ? Manifest(destination) : new(StringComparer.OrdinalIgnoreCase);
             string[] originalDirectories = existed ? Directories(destination) : [];
+            SnapshotTestCheckpoint.Value?.Invoke();
             Dictionary<string, string> before = Manifest(source);
             string[] directories = Directories(source);
             if (before.Keys.Any(IsLedgerName))
@@ -82,11 +105,11 @@ public static class PackPendingMigration
                     throw new IOException("Pending destination changed during migration: " + file.Key);
             foreach (var file in original.Where(file => !before.ContainsKey(file.Key)))
                 if (Hash(PackageTree.ResolveRelative(stage, file.Key)) != file.Value)
-                    throw new IOException("Existing destination copy verification failed: " + file.Key);
+                    throw new DestinationChangedException("Existing destination copy verification failed: " + file.Key);
             if (Directory.Exists(destination) != existed || (existed
                 && (!Same(original, Manifest(destination))
                     || !originalDirectories.SequenceEqual(Directories(destination), StringComparer.OrdinalIgnoreCase))))
-                throw new IOException("Destination changed during pending migration; commit blocked.");
+                throw new DestinationChangedException("Destination changed during pending migration; commit blocked.");
             // 只有安装器生成的新批次可刷新旧动作账本；无批次的旧 pending 迁移仍保留历史。
             // 在同一 stage 中提交配置和新身份，失败时 live 目录/账本都不变。
             if (before.ContainsKey(PackApplicationBatch.FileName)
@@ -102,7 +125,8 @@ public static class PackPendingMigration
             error = null;
             return true;
         }
-        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        catch (Exception ex) when (ex is not DestinationChangedException
+            && ex is (IOException or InvalidDataException or UnauthorizedAccessException or ArgumentException or NotSupportedException))
         {
             error = ex.Message;
             return false;

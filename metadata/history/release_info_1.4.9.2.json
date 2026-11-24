@@ -1,0 +1,17 @@
+{
+  "version": "1.4.9.2",
+  "releases": {
+    "x64-portable": {
+      "version": "1.4.9.2",
+      "architecture": "X64",
+      "install_type": "Portable",
+      "build_time": "2026-11-24T09:35:28.256607+00:00",
+      "disable_auto_update": false,
+      "package_url": "https://github.com/thx114/F6-Launcher/releases/download/v1.4.9.2/F6Launcher_Portable_1.4.9.2_x64.zip",
+      "package_size": 197332309,
+      "package_hash": "5e71097efdc2a06b509e3f32358cf139913d9a0f8b17798820e8e72fe09c0e2c",
+      "manifest_url": "",
+      "diffs": {}
+    }
+  }
+}

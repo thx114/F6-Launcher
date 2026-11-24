@@ -105,8 +105,7 @@ public static class PackOnceLedger
                 stream.Write(bytes);
                 stream.Flush(flushToDisk: true);
             }
-            if (File.Exists(path)) File.Replace(temp, path, null);
-            else File.Move(temp, path);
+            File.Move(temp, path, overwrite: true);
         }
         finally { if (File.Exists(temp)) File.Delete(temp); }
     }

@@ -32,6 +32,7 @@ public static partial class LauncherActionRunner
         => step.Action.Trim().ToLowerInvariant() switch
         {
             "import_opt_config" => ImportOptConfig(step, context),
+            "import_opt_config_with_asi" => ImportOptConfigWithAsi(step, context),
             "update_opt_config" => UpdateOptConfig(step, context),
             "set_opt_config" or "apply_opt_config" or "select_opt_config" => SetOptConfig(step, context),
             _ => throw new NotSupportedException(step.Action),

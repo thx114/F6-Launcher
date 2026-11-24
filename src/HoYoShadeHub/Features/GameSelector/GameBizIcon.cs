@@ -27,7 +27,7 @@ public partial class GameBizIcon : ObservableObject, IEquatable<GameBizIcon>
 
     public string ServerName { get; set => SetProperty(ref field, value); }
 
-    public double MaskOpacity { get; set => SetProperty(ref field, value); } = 1.0;
+    public double IconOpacity { get; set => SetProperty(ref field, value); } = 0.7;
 
     /// <summary>在顶部那行里（= 已固定）。右键菜单靠它决定显示「固定」还是「取消固定」</summary>
     public bool IsPinned
@@ -64,7 +64,7 @@ public partial class GameBizIcon : ObservableObject, IEquatable<GameBizIcon>
         set
         {
             field = value;
-            MaskOpacity = value ? 0 : 1;
+            IconOpacity = value ? 1.0 : 0.7;
         }
     }
 

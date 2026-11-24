@@ -53,6 +53,8 @@ namespace HoYoShadeHub.Features.Plugins;
 /// </summary>
 public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
 {
+    private const string RetiredOptiScalerSourceId = "wilsjo2";
+
     private readonly ILogger<GlobalPluginPage> _logger = AppConfig.GetLogger<GlobalPluginPage>();
 
     /// <summary>模块卡片要显示「当前游戏版本」时读本地游戏目录用（和设置页同一套读法）</summary>
@@ -1098,11 +1100,11 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
     }
 
     /// <summary>
-    /// 只认「会往插件目录里装 addon」的扩展包。
-    /// 滤镜 / 预设那种（比如官方预设合集）先不进这个页面 —— 用户明确要求「只管理插件」。
+    /// 只列会装插件的扩展包。旧目录缓存中的 NR 运行时条目由 DLL 配置页接管。
     /// </summary>
     private static bool IsPluginExtension(ExtensionManifest manifest) =>
-        manifest.Rules.Any(rule =>
+        !string.Equals(manifest.Id, "dlssnr.lecram", StringComparison.OrdinalIgnoreCase)
+        && manifest.Rules.Any(rule =>
             (rule.To ?? string.Empty).Replace('\\', '/').Contains("Addons", StringComparison.OrdinalIgnoreCase));
 
     /// <summary>重建「当前」的插件文件列表（哪些文件已经归到扩展卡片下面，由 ApplyFilter 再算）</summary>
@@ -1494,10 +1496,12 @@ public sealed partial class GlobalPluginPage : PageBase, IShellFileDropTarget
         bool hasSearch = !string.IsNullOrWhiteSpace(_search);
 
         ReconcileCollection(OptiScalerBuilds, _allOptiScalerBuilds.Where(build =>
-            MatchSearch(build.Title, build.Build.Version, build.Build.SourceId, build.Build.AssetName)
-            || build.InstalledVersionRows.Any(row => MatchSearch(row.Version, row.DisplayText))));
+            !string.Equals(build.Build.SourceId, RetiredOptiScalerSourceId, StringComparison.OrdinalIgnoreCase)
+            && (MatchSearch(build.Title, build.Build.Version, build.Build.SourceId, build.Build.AssetName)
+                || build.InstalledVersionRows.Any(row => MatchSearch(row.Version, row.DisplayText)))));
         ReconcileCollection(OptiScalerSources, _allOptiScalerSources.Where(source =>
-            MatchSearch(source.Name, source.Description, source.Repository, source.TagsText)));
+            !string.Equals(source.Source.Id, RetiredOptiScalerSourceId, StringComparison.OrdinalIgnoreCase)
+            && MatchSearch(source.Name, source.Description, source.Repository, source.TagsText)));
 
         TextBlock_OptiScalerCurrentEmpty.Text = hasSearch
             ? "没有符合搜索条件的 OptiScaler。"

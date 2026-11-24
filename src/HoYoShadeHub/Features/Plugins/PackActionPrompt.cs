@@ -264,7 +264,7 @@ public static class OverlayPackActionPrompter
 
                 // 暂存的 GamePack 先铺进包目录（同 GameAddonPackService.Sync 的暂存逻辑）：
                 // 全新实例导入时 cache\games\ 还没有这个游戏的目录，不铺的话弹窗永远不会在导入当场弹
-                try { PackPendingMigration.PlaceMatching(cacheRoot, gameKey); }
+                try { await Task.Run(() => PackPendingMigration.PlaceMatching(cacheRoot, gameKey)); }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
                 {
                     _logger.LogWarning(ex, "Place pending pack before consent ({Game})", gameKey);
@@ -375,7 +375,8 @@ public static class OverlayPackActionPrompter
                     // （once 记账一立，状态就定格在「全开」——崩铁 mfgunlock 事故）
                     try
                     {
-                        GameIniBootstrap.Ensure(entry, host, GameLauncher.GameLauncherService.UsesGenshinFinalDx12(id));
+                        bool finalDx12 = GameLauncher.GameLauncherService.UsesGenshinFinalDx12(id);
+                        await Task.Run(() => GameIniBootstrap.Ensure(entry, host, finalDx12));
                     }
                     catch (Exception ex)
                     {
@@ -384,7 +385,7 @@ public static class OverlayPackActionPrompter
 
                     try
                     {
-                        GameAddonPackService.Sync(id, entry, host);
+                        await Task.Run(() => GameAddonPackService.Sync(id, entry, host));
                     }
                     catch (Exception ex)
                     {
@@ -398,7 +399,8 @@ public static class OverlayPackActionPrompter
 
                     // auto.json 可能在最后一步写入旧的相对 AddonPath。覆盖包导入的最终状态
                     // 必须仍然指向本游戏的专属包，否则插件文件虽已落盘，游戏页会扫描到空目录。
-                    string boundAddonPath = GamePackIniBinding.Bind(entry, host, GameAddonPack.AddonDirectory(cacheRoot, id.GameBiz.Value));
+                    string boundAddonPath = await Task.Run(() => GamePackIniBinding.Bind(entry, host,
+                        GameAddonPack.AddonDirectory(cacheRoot, id.GameBiz.Value)));
                     _logger.LogInformation("覆盖包动作后已复核绑定 {Game}：{Ini} → {AddonPath}", id.GameBiz.Value, entry.ReShadeIniPath, boundAddonPath);
                     if (results.Count > 0)
                     {
